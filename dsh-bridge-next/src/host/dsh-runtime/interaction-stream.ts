@@ -77,11 +77,12 @@ export class InteractionStream {
     const ctx = this.activeContext, clientId = this.clientId
     if (!ctx || !clientId) throw new Error('DSH 交互连接暂不可用，请稍后重试。')
     const rpcId = randomUUID()
-    // Public, already-authenticated in-process carrier. No HTTP request leaves the Host.
-    const response = await ctx.connection.createSharedFetchHandler('/api').fetch(new Request('http://127.0.0.1/api/$events/result', {
+    // Use the same admitted Connection Peer as the Remote event stream.
+    const handler = ctx.connection.createSharedFetchHandler('/api')
+    const response = await Reflect.apply(handler.fetch, handler, [new Request('http://127.0.0.1/api/$events/result', {
       method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(15_000),
       body: JSON.stringify({ type: 'client-request', rpcId, method: '$events/result', payload: { args: { clientId, eventId, outcome } } }),
-    }))
+    }), Reflect.get(ctx.connection, 'browserPeer')])
     const envelope = record(await response.json())
     if (!response.ok || envelope.type !== 'server-response' || envelope.rpcId !== rpcId || record(envelope.result).ok !== true) {
       throw new Error('DSH 未接收回答，请稍后重试。')

@@ -70,3 +70,40 @@ test('the local consumer uses Connection browserPeer and announces only actual a
   } finally { await stream.close() }
   assert.deepEqual(availability, [true, false])
 })
+
+for (const outcome of [{ kind: 'next' } as const, { kind: 'result', value: 'allowed-once' } as const]) {
+  test(`interaction ${outcome.kind} replies carry the event stream's admitted Peer`, async () => {
+    const peer = { principal: { kind: 'owner' }, interactions: 'answer', signal: new AbortController().signal }
+    let dispose = async () => {}, replies = 0
+    const handler = { fetch: async (request: Request, identity?: unknown) => {
+      assert.equal(identity, peer, 'Gateway rejects an event reply with an absent or different Peer')
+      const body = await request.json() as { rpcId: string, payload: { args: unknown } }
+      assert.deepEqual(body.payload.args, { clientId: 'approval-client', eventId: 'approval-event', outcome })
+      replies++
+      return Response.json({ type: 'server-response', rpcId: body.rpcId, result: { ok: true } })
+    } }
+    const ready = {
+      typertGateway: { wireStream: { open: async function (_endpoint: unknown, _payload: unknown, _uplink: unknown, identity: unknown, signal: AbortSignal) {
+        assert.equal(identity, peer)
+        return (async function* () {
+          yield { type: 'ready', clientId: 'approval-client' }
+          await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+        })()
+      } } },
+      connection: { browserPeer: peer, createSharedFetchHandler: () => handler },
+      effect: (start: () => () => Promise<void>) => { dispose = start() },
+    }
+    const ctx = { inject: (_keys: unknown, callback: (value: typeof ready) => void) => {
+      callback(ready)
+      return { dispose: () => dispose() }
+    } }
+    const stream = new InteractionStream(ctx as never, async () => {}, () => {})
+    try {
+      for (let n = 0; n < 50 && !stream.available; n++) await delay(5)
+      assert.equal(stream.available, true)
+      await stream.reply('approval-event', outcome)
+      assert.equal(replies, 1, 'the event result reaches the admitted caller')
+      assert.equal(stream.available, true, 'acknowledging an event preserves the stream')
+    } finally { await stream.close() }
+  })
+}

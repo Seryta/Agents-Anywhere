@@ -201,3 +201,25 @@ def test_live_unrelated_process_does_not_block_connector_start():
     finally:
         unrelated.terminate()
         unrelated.wait(timeout=5)
+
+
+@pytest.mark.parametrize("entry", ["pi-aa-connector", "pi-aa-connector.exe"])
+def test_live_pi_connector_prevents_a_second_connector_from_taking_ownership(tmp_path, entry):
+    script = tmp_path / entry
+    script.write_text("import time; time.sleep(60)\n")
+    process = subprocess.Popen([sys.executable, str(script), "start"])
+    try:
+        lease = RuntimeLease()
+        with state_transaction(lease.path) as state:
+            state["runtime"] = {
+                "instanceId": "pi-service", "pid": process.pid, "kind": "cli",
+                "startedAt": "old", "processStartedAt": runtime_owner.process_identity(process.pid),
+            }
+        with pytest.raises(ConnectorAlreadyRunningError) as conflict:
+            RuntimeLease(kind="dsh-plugin").claim(config())
+        assert conflict.value.owner.pid == process.pid
+        assert read_state(lease.path)["runtime"]["instanceId"] == "pi-service"
+        assert process.poll() is None
+    finally:
+        process.terminate()
+        process.wait(timeout=5)

@@ -46,6 +46,9 @@ class AgentRuntime(ABC):
     async def stop(self) -> None:
         pass
 
+    async def on_backend_reconnect(self) -> None:
+        """Republish runtime-owned state after the backend connection recovers."""
+
     async def get_config(self) -> RuntimeConfig:
         raise RuntimeUnsupportedError("get_config")
 

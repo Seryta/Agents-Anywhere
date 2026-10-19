@@ -47,3 +47,12 @@ def test_rpc_log_sink_defaults_to_info_level() -> None:
     events = asyncio.run(exercise())
 
     assert [event[1]["message"] for event in events] == ["visible info"]
+
+
+def test_standard_runtime_extension_logs_reach_official_logging(capsys):
+    import logging
+
+    from connector.logging import configure_connector_logging
+    configure_connector_logging()
+    logging.getLogger("pi_aa.runtime").info("runtime extension connected")
+    assert "runtime extension connected" in capsys.readouterr().err

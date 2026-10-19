@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -21,6 +22,17 @@ def configure_connector_logging(*, debug: bool = False) -> None:
     level = "DEBUG" if debug else "INFO"
     logger.remove()
     logger.add(sys.stderr, level=level, format=DEFAULT_LOG_FORMAT)
+    # Runtime extensions can use Python's standard logging API.
+    logging.basicConfig(handlers=[_StdlibLogHandler()], level=level, force=True)
+
+
+class _StdlibLogHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level: str | int = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        logger.opt(exception=record.exc_info).log(level, record.getMessage())
 
 
 class RpcLogSink:

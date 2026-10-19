@@ -89,6 +89,7 @@ class RuntimeSyncRunner:
                 runtime = self.supervisor.resolve_runtime(runtime_id)
                 if runtime.sync_mode == "events":
                     await runtime.resynchronize()
+                await runtime.on_backend_reconnect()
             except Exception:
                 logger.exception("runtime event recovery deferred runtime={}", runtime_id)
 

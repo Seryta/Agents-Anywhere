@@ -259,3 +259,16 @@ test('startup exit 2 preserves uv diagnostics in the Connector journal', async (
     assert.match(logs, /exited \(2\)/)
   } finally { await h.close() }
 })
+
+test('ownership reservation survives provisioning in the same control process', async () => {
+  const h = await fixture()
+  try {
+    await h.connector.prepare()
+    await h.connector.reserveOwnership()
+    const reservedPid = h.child!.pid
+    assert.equal(h.connector.running, false, 'reservation must not start a backend connection')
+    await h.connector.start(binding, 'https://api.example.test', new AbortController().signal)
+    assert.equal(h.child!.pid, reservedPid, 'provisioning must reuse the process that owns the lease')
+    assert.equal(h.connector.running, true)
+  } finally { await h.close() }
+})

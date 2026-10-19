@@ -14,7 +14,7 @@ export async function recordConnectorId(home: string, id: string): Promise<void>
 }
 
 /** Real CLI/RPC entry point with only the remote backend replaced by a wait. */
-export function launchConnector(home: string, kind: string, mode: 'rpc' | 'start' = 'rpc') {
+export function launchConnector(home: string, kind: string, mode: 'rpc' | 'start' | 'serve' = 'rpc') {
   const hook = join(home, 'test-python')
   mkdirSync(hook, { recursive: true })
   const code = `import asyncio, os, sys
@@ -30,10 +30,11 @@ BackendRpcClient.run_forever=fake_backend
   try { writeFileSync(join(hook, 'sitecustomize.py'), code, { flag: 'wx' }) }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
   const args = ['-u', '-m', 'connector.cli', mode, '--config', join(home, 'private', kind, 'connector.json')]
+  if (mode === 'serve') args.push('--socket', join(home, 'control.sock'))
   if (mode === 'start') args.push('--server-url', 'https://example.test', '--connector-id', 'cli-id', '--connector-token', 'fixture')
   const child = spawn(python, args, {
     cwd: connectorProject,
-    env: { ...process.env, AA_CONNECTOR_OWNER_KIND: kind, AA_TEST_CONNECTOR_HOME: home, PYTHONPATH: [hook, connectorProject].join(delimiter) },
+    env: { ...process.env, AA_CONNECTOR_OWNER_KIND: kind, AA_TEST_CONNECTOR_HOME: home, PYTHONPATH: [hook, connectorProject, process.env.PYTHONPATH || ''].join(delimiter) },
     stdio: 'pipe',
   })
   let buffer = '', stderr = '', id = 0
@@ -72,9 +73,11 @@ BackendRpcClient.run_forever=fake_backend
     async close(crash = false) {
       if (child.exitCode !== null || child.signalCode !== null) return
       const exited = once(child, 'exit')
-      if (crash || mode === 'start') child.kill(crash ? 'SIGKILL' : 'SIGINT')
+      if (crash || mode === 'start' || mode === 'serve') child.kill(crash ? 'SIGKILL' : 'SIGINT')
       else child.stdin.end()
-      await exited
+      const watchdog = setTimeout(() => { child.kill('SIGKILL') }, 6000)
+      try { await exited } finally { clearTimeout(watchdog) }
+      if (!crash && child.signalCode === 'SIGKILL') throw new Error('Connector failed to shut down: ' + stderr)
     },
   }
 }

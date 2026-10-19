@@ -28,6 +28,7 @@ export const PYPI_MIRRORS = [
 export type ConnectorAction = 'start' | 'stop' | 'restart'
 export type ConnectorFolder = 'data' | 'logs'
 export interface ConnectorManagement {
+  mode?: 'managed' | 'external'
   settings: ConnectorSettings
   resolvedUvPath: string | null
   dataPath: string

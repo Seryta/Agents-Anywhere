@@ -4,7 +4,10 @@ import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import type { ResolvedConfig } from '../config.js'
-import type { BoundDevice } from '../account/binding.js'
+import type { DeviceIdentity } from '../account/binding.js'
+import type { Account } from '../account/api.js'
+import type { ConnectorAction } from '../../contracts/connector.js'
+import type { ConnectorLogPage, ConnectorLogQuery } from '../../contracts/logs.js'
 import { writeJson } from '../storage/files.js'
 import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../contracts/connector.js'
 import { resolveUv } from './environment.js'
@@ -44,10 +47,15 @@ interface Pending {
 
 export interface ConnectorProcess {
   readonly running: boolean
+  readonly external?: boolean
+  reserveOwnership?(signal?: AbortSignal): Promise<void>
+  readLogs?(query?: ConnectorLogQuery): Promise<ConnectorLogPage>
+  bindAccount?(account: Account, signal: AbortSignal, recovery?: 'reconnect' | 'recreate'): Promise<DeviceIdentity>
+  control?(action: ConnectorAction): Promise<void>
   readonly lastError?: string | null
   onState(listener: (state: ConnectorState) => void): () => void
   prepare(settings?: ConnectorSettings): Promise<void>
-  start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void>
+  start(binding: DeviceIdentity, apiBaseUrl: string, signal: AbortSignal): Promise<void>
   stop(): Promise<void>
   assertHealthy(): Promise<void>
 }
@@ -76,6 +84,7 @@ export class SourceConnector implements ConnectorProcess {
   private readonly logs: ConnectorLogs
   /** 可写的项目副本；uv 只在这个目录里写 uv.lock，绝不碰插件包目录。 */
   private projectDir: string | null = null
+  private reserved = false
   constructor(private readonly config: ResolvedConfig, private readonly launch: ConnectorLauncher = spawn,
     private readonly settings: () => ConnectorSettings = () => DEFAULT_CONNECTOR_SETTINGS,
     private readonly firstRequestTimeoutMs = FIRST_REQUEST_TIMEOUT,
@@ -114,10 +123,11 @@ export class SourceConnector implements ConnectorProcess {
     }
   }
 
-  async start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
+  async start(binding: DeviceIdentity, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
+    if (!binding.connectorToken) throw new Error('Connector 凭据缺失。')
     if (this.stopping) await this.stopping
     if (this.running) return
-    if (this.alive) await this.stop()
+    if (this.alive && !this.reserved) await this.stop()
     signal.throwIfAborted()
     const dataDir = join(this.config.stateRoot, 'connector')
     const configPath = join(dataDir, 'connector.json')
@@ -134,70 +144,96 @@ export class SourceConnector implements ConnectorProcess {
       syncExistingOnConnect: true,
     })
     signal.throwIfAborted()
-    this.failure = null
-    this.buffer = ''
-    this.updateState({ running: false, authFailed: false })
-    await this.logs.startSession([binding.connectorToken])
-    this.logs.record('starting')
+    await this.withControl(signal, [binding.connectorToken], async () => {
+      this.updateState(await this.call('connector.start'))
+    })
+  }
+
+  async reserveOwnership(signal = new AbortController().signal): Promise<void> {
+    if (this.stopping) await this.stopping
+    if (this.alive && (this.running || this.reserved)) return
+    signal.throwIfAborted()
+    await this.withControl(signal, [], async () => {
+      this.updateState(await this.call('connector.acquireOwnership'))
+      this.reserved = true
+    }, true)
+  }
+
+  private async withControl(signal: AbortSignal, secrets: string[], operation: () => Promise<void>, preserveCacheOnConflict = false): Promise<void> {
+    const dataDir = join(this.config.stateRoot, 'connector')
+    const configPath = join(dataDir, 'connector.json')
+    const settings = this.settings()
     const executable = await resolveUv(this.config, settings)
     const command = executable ?? (settings.uvPath || this.config.uvPath)
-    const pypiIndexUrl = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
-    signal.throwIfAborted()
-    // 不依赖 prepare() 的调用顺序：start() 自己也要保证项目副本就位。
-    const projectDir = this.projectDir ??= await materializeConnectorProject(this.config)
-    signal.throwIfAborted()
-    const child = this.launch(command, [
-      'run', '--directory', projectDir,
-      'anywhere-cli', 'rpc', '--config', configPath,
-    ], {
-      cwd: projectDir,
-      windowsHide: true,
-      detached: process.platform !== 'win32',
-      env: {
-        ...process.env,
-        AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
-        ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
-        AGENT_CONNECTOR_DATA_DIR: dataDir,
-        UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
-        PYTHONDONTWRITEBYTECODE: '1',
-        PYTHONUNBUFFERED: '1',
-        UV_HTTP_TIMEOUT: process.env['UV_HTTP_TIMEOUT'] || UV_READ_TIMEOUT_SECONDS,
-        UV_PYTHON_INSTALL_MIRROR: settings.uvPythonInstallMirror || 'https://github.com/astral-sh/python-build-standalone/releases/download',
-        UV_DEFAULT_INDEX: pypiIndexUrl,
-        UV_INDEX_URL: pypiIndexUrl,
-        PIP_INDEX_URL: pypiIndexUrl,
-      },
-    })
-    this.child = child
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => { if (this.child === child) this.receive(chunk) })
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => { this.logs.output(chunk) })
-    child.stdin.on('error', () => { if (this.child === child) this.fail(new Error('Connector 输入连接已关闭。')) })
-    child.on('error', () => { if (this.child === child) this.fail(new Error('Connector 进程启动失败，请检查 uv 和源码运行环境。')) })
-    child.on('close', (code) => {
-      this.closed.add(child)
-      this.logs.finish()
-      this.logs.record(`exited (${code ?? 'signal'})`)
-      void this.logs.flush().catch(() => undefined)
-      if (this.child === child) {
-        this.child = null
-        this.fail(new Error(`Connector 已退出（${code ?? '终止'}）。请在日志页切换到 Connector 查看原因。`), !this.stopping)
-      }
-    })
+    const starting = !this.alive
+    if (starting) {
+      this.reserved = false
+      await mkdir(dataDir, { recursive: true, mode: 0o700 })
+      this.failure = null
+      this.buffer = ''
+      this.updateState({ running: false, authFailed: false })
+      await this.logs.startSession(secrets)
+      this.logs.record('starting')
+      const pypiIndexUrl = settings.uvPypiIndexUrl || 'https://pypi.org/simple'
+      signal.throwIfAborted()
+      // 不依赖 prepare() 的调用顺序：start() 自己也要保证项目副本就位。
+      const projectDir = this.projectDir ??= await materializeConnectorProject(this.config)
+      signal.throwIfAborted()
+      const child = this.launch(command, [
+        'run', '--directory', projectDir,
+        'anywhere-cli', 'rpc', '--config', configPath,
+      ], {
+        cwd: projectDir,
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+        env: {
+          ...process.env,
+          AA_CONNECTOR_OWNER_KIND: 'dsh-plugin',
+          ...(this.config.dshHome ? { DSH_HOME: this.config.dshHome } : {}),
+          AGENT_CONNECTOR_DATA_DIR: dataDir,
+          UV_PROJECT_ENVIRONMENT: join(this.config.stateRoot, 'connector-venv'),
+          PYTHONDONTWRITEBYTECODE: '1',
+          PYTHONUNBUFFERED: '1',
+          UV_HTTP_TIMEOUT: process.env['UV_HTTP_TIMEOUT'] || UV_READ_TIMEOUT_SECONDS,
+          UV_PYTHON_INSTALL_MIRROR: settings.uvPythonInstallMirror || 'https://github.com/astral-sh/python-build-standalone/releases/download',
+          UV_DEFAULT_INDEX: pypiIndexUrl,
+          UV_INDEX_URL: pypiIndexUrl,
+          PIP_INDEX_URL: pypiIndexUrl,
+        },
+      })
+      this.child = child
+      child.stdout.setEncoding('utf8')
+      child.stdout.on('data', (chunk: string) => { if (this.child === child) this.receive(chunk) })
+      child.stderr.setEncoding('utf8')
+      child.stderr.on('data', (chunk: string) => { this.logs.output(chunk) })
+      child.stdin.on('error', () => { if (this.child === child) this.fail(new Error('Connector 输入连接已关闭。')) })
+      child.on('error', () => { if (this.child === child) this.fail(new Error('Connector 进程启动失败，请检查 uv 和源码运行环境。')) })
+      child.on('close', (code) => {
+        this.closed.add(child)
+        this.logs.finish()
+        this.logs.record(`exited (${code ?? 'signal'})`)
+        void this.logs.flush().catch(() => undefined)
+        if (this.child === child) {
+          this.child = null
+          this.fail(new Error(`Connector 已退出（${code ?? '终止'}）。请在日志页切换到 Connector 查看原因。`), !this.stopping)
+        }
+      })
+    } else this.logs.setSecrets(secrets)
     const abort = () => { void this.stop() }
     signal.addEventListener('abort', abort, { once: true })
     try {
       signal.throwIfAborted()
       // Includes the first uv dependency installation, not just Python startup.
-      this.updateState(await this.call('connector.getState', this.firstRequestTimeoutMs))
+      this.updateState(await this.call('connector.getState', starting ? this.firstRequestTimeoutMs : 15_000))
       signal.throwIfAborted()
-      this.updateState(await this.call('connector.start'))
+      await operation()
       signal.throwIfAborted()
     } catch (error) {
       await this.stop()
       // Whatever ended this attempt left a partial download behind, and only a prune reclaims it.
-      try { await this.prune(command) } catch { /* Housekeeping may not replace the real failure. */ }
+      if (!(preserveCacheOnConflict && error instanceof ConnectorOwnershipError)) {
+        try { await this.prune(command) } catch { /* Housekeeping may not replace the real failure. */ }
+      }
       throw error
     } finally {
       signal.removeEventListener('abort', abort)
@@ -215,7 +251,7 @@ export class SourceConnector implements ConnectorProcess {
 
   stop(): Promise<void> {
     if (this.stopping) return this.stopping
-    this.stopping = this.stopChild().finally(async () => { await this.logs.flush(); this.failure = null; this.stopping = null })
+    this.stopping = this.stopChild().finally(async () => { await this.logs.flush(); this.failure = null; this.stopping = null; this.reserved = false })
     return this.stopping
   }
 

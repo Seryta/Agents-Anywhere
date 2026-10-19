@@ -32,6 +32,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
   const signature = JSON.stringify(management?.settings)
   useEffect(() => { setDraft(management?.settings) }, [signature])
   if (!management || !draft) return <p className={css.hint} role="status">{t('请重启 DSH Host，以加载 Connector 管理接口。')}</p>
+  const external = management.mode === 'external'
   const connecting = ['authorizing', 'pairing', 'starting'].includes(snapshot.stage)
   const busy = state.busy || connecting || Boolean(state.readError)
   const status = connectorStatus(snapshot, state.readError, t)
@@ -62,6 +63,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
         <dt>{t('服务器')}</dt><dd>{snapshot.settings.apiBaseUrl}</dd>
       </dl>
       {status.detail ? <p className={css.hint} role="status">{translateMessage(t, status.detail)}</p> : null}
+      {external ? <p className={css.hint}>{t('由共享服务管理，停止或重启将影响此设备上的所有 Agent。')}</p> : null}
       {!snapshot.account || snapshot.deviceRecovery ? <Button variant="outline" onClick={onConnection}>
         {snapshot.account ? t('前往恢复连接') : t('前往登录')}
       </Button> : <div className={css.actions}>
@@ -72,7 +74,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
       </div>}
     </div>
 
-    <form className={css.form} onSubmit={event => {
+    {!external ? <form className={css.form} onSubmit={event => {
       event.preventDefault()
       if (!busy && dirty) void state.run(() => host.saveConnectorSettings(draft)).then(success => { if (success) setSaved(true) })
     }}>
@@ -110,14 +112,15 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
           </Button>
         </div>
       </div>
-    </form>
+    </form> : null}
 
     <div className={css.section}>
       <h3>{t('维护')}</h3>
+      {external ? <p className={css.hint}>{t('重置只清除本插件的账号数据，共享服务与其他 Agent 继续运行。')}</p> : null}
       <div className={css.actions}>
-        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || !management.canOpenFolders}
+        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || external || !management.canOpenFolders}
           onClick={() => void state.run(() => host.openConnectorFolder('data'))}>{t('打开数据目录')}</Button>
-        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || !management.canOpenFolders}
+        <Button variant="outline" icon={<FolderOpen size={14} />} disabled={state.busy || external || !management.canOpenFolders}
           onClick={() => void state.run(() => host.openConnectorFolder('logs'))}>{t('打开日志目录')}</Button>
         <Button variant="outline" className={css.danger} disabled={busy}
           onClick={() => { setReset('normal'); setAcknowledged(false); state.clearError() }}>{t('恢复出厂设置')}</Button>
@@ -125,7 +128,7 @@ export function SettingsPanel({ t, host, state, snapshot, onConnection }: {
       {!management.canOpenFolders ? <p className={css.hint}>{t('当前环境不支持打开本机目录。')}</p> : null}
       <RiskConfirmation open={reset !== null} title={reset === 'force' ? t('无法撤销连接') : t('恢复出厂设置')}
         description={reset === 'force' ? t('服务端撤销失败，本地数据尚未清理。可以取消后重试，或仅清理本地数据；原设备凭据在服务端可能仍有效。')
-          : t('将撤销当前设备凭据、停止 Connector，并清除本插件的本地连接数据。DSH 会话和共享的设备记录会保留。')}
+          : external ? t('重置只清除本插件的账号数据，共享服务与其他 Agent 继续运行。') : t('将撤销当前设备凭据、停止 Connector，并清除本插件的本地连接数据。DSH 会话和共享的设备记录会保留。')}
         acknowledgeLabel={t('我了解恢复出厂设置的影响')} acknowledged={acknowledged} onAcknowledgedChange={setAcknowledged}
         cancelLabel={t('取消')} closeLabel={t('关闭恢复出厂设置确认')} confirmLabel={reset === 'force' ? t('仅清理本地数据') : t('确认恢复出厂设置')}
         disabled={state.busy} onCancel={() => { if (!state.busy) { setReset(null); state.clearError() } }} onConfirm={() => void confirmReset()} />

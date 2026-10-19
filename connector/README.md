@@ -197,3 +197,36 @@ uv run pytest -q
 ```
 
 DSH 插件默认将私有数据存放在 `~/.agents-anywhere/dsh-bridge-next/`，其托管 Connector 通过 `AGENT_CONNECTOR_DATA_DIR` 使用其中的 `connector/` 子目录。插件首次启动负责迁移旧 `.agentsanywhere/dsh-bridge-next/` 数据；通用 Connector 的默认路径和自定义环境变量行为不变。
+
+
+## Shared service and installed Runtime extensions
+
+`anywhere-cli serve` runs the per-user Connector independently of any UI process.
+It owns one device identity, config and RuntimeLease. Local management clients use
+`~/.agents-anywhere/connector.sock` (0600 in a private directory); disconnecting a
+client does not stop Agent runtimes. Only explicit stop/restart operations do so.
+`anywhere-cli doctor --expect-runtime pi --expect-runtime dsh` emits JSON and exits
+nonzero when the installation or local service is unhealthy. It does not verify
+backend presence or a model turn.
+
+Installed Python providers are discovered through the versioned entry point group
+`agents_anywhere.runtime_providers.v1`. Built-in providers remain unchanged and
+cannot be replaced by extensions. See [the extension contract](../docs/runtime-protocol/runtime-extensions.md)
+and [the local control protocol](../contracts/connector-local-control/v1/README.md).
+The current shared-service transport targets Unix systems; the existing stdio RPC
+and CLI remain available.
+
+
+### Updating runtime extension code
+
+Runtime entry points load Python code into the shared Connector process; they do
+not provide hot reload or a separate worker. After installing a new extension or
+Connector wheel, restart the host process (`systemctl --user restart
+agents-anywhere-connector.service` in the shared-service deployment). All runtimes
+on that device may be interrupted, so wait for active work to settle first.
+
+The control RPC `connector.restart` only rebuilds the backend task inside the same
+Python process. It does not reliably load changed modules. Neither restarting a
+single Runtime nor Pi's native `/reload` substitutes for a process restart. Editing
+a source checkout also has no effect on an installed wheel. See the
+[runtime extension lifecycle](../docs/runtime-protocol/runtime-extensions.md).

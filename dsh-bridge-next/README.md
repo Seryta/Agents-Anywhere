@@ -23,6 +23,8 @@ DSH Desktop 已集成此插件，**不需要另行下载或执行 npm 安装命�
 
 ## 从 npm 安装到独立 DSH
 
+使用本集成的单设备公共Connector时，应安装匹配的本地构建tgz并配置下文的外部服务模式。下面的普通npm安装方式用于官方内置托管模式，不能据此覆盖共享服务的集成包。
+
 如果使用独立安装的 DSH，可以通过官方插件命令从 npm 安装。先确认目标 Profile 的名称，以及当前 npm 包声明的 DSH 依赖是否与你的环境相容。下面以 `desktop` Profile 为例：
 
 ```bash
@@ -51,3 +53,22 @@ dsh plugin --profile desktop add @agents-anywhere/dsh-bridge-next
 本仓库源码和 npm 已发布包可能处于不同版本。源码构建、链接安装、headless 检查、配置和实现细节见[技术说明](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/TECHNICAL.md)。
 
 [开发计划](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/DEVELOPMENT_PLAN.md) · [Onboarding 方案](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/ONBOARDING_PLAN.md) · [验证记录](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/VERIFICATION.md) · [Agents Anywhere 使用文档](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/docs/README.md)
+
+
+## 连接已有公共 Connector
+
+此集成版本支持在插件配置中指定绝对路径 `connectorSocketPath`，连接由 systemd
+托管的 `anywhere-cli serve`。启用后，设备身份和 Connector 凭据由公共服务唯一管理；
+插件保留账号授权和官方 DSH Bridge，普通登录不撤销已有凭据、不重复注册设备。
+
+插件重载、退出 DSH、退出账号及重置插件只解除本机管理连接；共享服务和其他 Agent
+继续运行。面板主动停止或重启会影响该设备的全部 Runtime，界面会显示这一范围。
+Python 镜像、uv 路径及同步设置由公共服务管理，外部模式不显示内置 Connector 安装设置。
+日志面板读取公共服务最近 10,000 条有限日志，长期日志交给 systemd journal。
+
+此模式要求同版本的 Connector 本机控制协议 v1，仅支持 Unix socket。服务不可用时
+明确报错，不启动内置 Connector 或注册第二个设备。账号或服务器与已绑定设备不一致
+时拒绝替换，设备删除和凭据失效保留显式恢复流程。使用原版内置托管模式时不配置此字段。
+
+
+更新此DSH插件的代码后，重新安装tgz并重启对应DSH实例即可；Pi与其他Runtime继续运行。更新公共Connector或Pi Python适配层则需要重启共享服务进程。面板“重启Connector”仅重建同一Python进程内的后端连接，虽然会影响全部Runtime，但不保证重载升级的Python模块。设备账号与配对配置不需要因普通升级而重建。

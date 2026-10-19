@@ -536,3 +536,38 @@ def test_initial_catalog_error_does_not_close_other_runtime_requests(monkeypatch
             await runtime.stop()
 
     asyncio.run(run())
+
+
+def test_discovery_preserves_probed_messaging_capabilities_without_probing_again():
+    async def run():
+        probes = 0
+        writable = True
+
+        async def support(_values):
+            return DshDiscovery(True, True, None, metadata={})
+
+        async def probe_bridge(_values):
+            nonlocal probes
+            probes += 1
+            return DshDiscovery(True, True, None, metadata={
+                "runtimeCapabilities": {"capabilities": [
+                    {"capabilityId": "session.send_message", "supported": writable, "available": writable, "allowed": writable},
+                    {"capabilityId": "catalog.model", "supported": writable, "available": writable, "allowed": writable},
+                ]},
+            })
+
+        provider = DshProvider(discoverer=support, prober=probe_bridge)
+        assert not (await provider.discover()).capabilities["startTurn"]
+        await provider.validate_config({})
+        for _ in range(2):
+            result = await provider.discover()
+            assert result.capabilities["startTurn"]
+            assert result.capabilities["createAndStartSession"]
+            assert result.capabilities["modelCatalog"]
+            assert result.metadata["readOnly"] is False
+        assert probes == 1, "Device discovery must not reconnect to the DSH bridge"
+        writable = False
+        await provider.validate_config({})
+        assert not (await provider.discover()).capabilities["startTurn"]
+
+    asyncio.run(run())

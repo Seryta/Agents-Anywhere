@@ -12,12 +12,12 @@ export type InteractionOutcome = { kind: 'next' } | { kind: 'result', value: unk
   | { kind: 'rejected', error: { name: string, code: string, message: string } }
 
 /** Published 0.1.5 uses (endpoint, payload, signal); 0.1.7 adds uplink and peer. */
-export function openInteractionEvents(wireStream: Context['typertGateway']['wireStream'], signal: AbortSignal): Promise<AsyncIterable<unknown>> {
+export function openInteractionEvents(wireStream: Context['typertGateway']['wireStream'], signal: AbortSignal, peer?: unknown): Promise<AsyncIterable<unknown>> {
   const open = wireStream.open
   const args: unknown[] = ['$events', { args: {} }]
   if (open.length === 5) {
-    // $events is receive-only. An undefined peer selects the official in-process operator.
-    args.push((async function* () {})(), undefined, signal)
+    // Current Gateway requires the admitted Connection Peer; replies use that same Peer.
+    args.push((async function* () {})(), peer, signal)
   } else if (open.length === 3) {
     args.push(signal)
   } else {
@@ -40,14 +40,16 @@ export class InteractionStream {
         let failed = false
         while (!abort.signal.aborted) {
           try {
-            const stream = await openInteractionEvents(ready.typertGateway.wireStream, abort.signal)
+            const stream = await openInteractionEvents(ready.typertGateway.wireStream, abort.signal, Reflect.get(ready.connection, 'browserPeer'))
             for await (const value of stream) {
               if (abort.signal.aborted) break
               const frame = record(value)
               if (frame.type === 'ready' && typeof frame.clientId === 'string') {
                 if (failed) diagnostics.log('info', 'interaction.stream_recovered', { service })
                 failed = false
-                this.clientId = frame.clientId; this.activeContext = ready; changed()
+                const wasAvailable = this.available
+                this.clientId = frame.clientId; this.activeContext = ready
+                if (!wasAvailable) changed()
               } else await receive(frame)
             }
           } catch (error) {
@@ -55,7 +57,11 @@ export class InteractionStream {
             if (!abort.signal.aborted && !failed) diagnostics.log('warn', 'interaction.stream_failed', { service, openArity: ready.typertGateway.wireStream.open.length }, error)
             failed = true
           }
-          finally { this.clientId = undefined; this.activeContext = undefined; changed() }
+          finally {
+            const wasAvailable = this.available
+            this.clientId = undefined; this.activeContext = undefined
+            if (wasAvailable) changed()
+          }
           try { await delay(500, undefined, { signal: abort.signal }) } catch { break }
         }
       }

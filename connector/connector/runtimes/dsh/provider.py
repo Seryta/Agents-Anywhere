@@ -49,9 +49,13 @@ class DshProvider(RuntimeProvider):
         self._last_discovery: discovery.DshDiscovery | None = None
         self._last_values = provider_config.default_config_values()
         self._preset_catalog: dict[str, Any] = {}
+        self._runtime_capabilities: dict[str, Any] | None = None
 
     def _remember(self, result: discovery.DshDiscovery) -> None:
         self._last_discovery = result
+        capabilities = (result.metadata or {}).get("runtimeCapabilities")
+        if isinstance(capabilities, dict):
+            self._runtime_capabilities = capabilities
         catalog = (result.metadata or {}).get("agentPresetCatalog")
         if isinstance(catalog, dict):
             self._preset_catalog = catalog
@@ -83,6 +87,9 @@ class DshProvider(RuntimeProvider):
         result = await self._discoverer(values)
         self._remember(result)
         metadata = dict(result.metadata or {})
+        # Support-only discovery must not erase the bridge's last confirmed controls.
+        if self._runtime_capabilities is not None:
+            metadata["runtimeCapabilities"] = self._runtime_capabilities
         capabilities = provider_config.dsh_capabilities(
             metadata.get("runtimeCapabilities")
         )

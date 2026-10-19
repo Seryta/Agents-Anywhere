@@ -32,7 +32,7 @@ def timeline_notice():
 
 
 @pytest.mark.parametrize("fail", [False, True])
-@pytest.mark.parametrize("projection_version", [2, 3])
+@pytest.mark.parametrize("projection_version", [2, 3, 4])
 def test_ingestion_precedes_checkpoint_and_ack_and_json_survives_restart(tmp_path, fail, projection_version):
     checkpoint = {**CHECKPOINT, "projectionVersion": projection_version}
     async def run():
@@ -103,7 +103,7 @@ def test_load_ack_returns_checkpoint_and_invalid_version_falls_back(tmp_path):
 
         async def request(method, params=None):
             if method == "runtime.sync.subscribe":
-                return {"streamId": "s", "projectionVersion": 3, "checkpointVersion": 1}
+                return {"streamId": "s", "projectionVersion": 4, "checkpointVersion": 1}
             await acknowledged.put(params)
 
         relay = SyncRelay(SimpleNamespace(request=request), host)
@@ -112,7 +112,7 @@ def test_load_ack_returns_checkpoint_and_invalid_version_falls_back(tmp_path):
             for seq, expected in [(1, CHECKPOINT), (2, None)]:
                 if seq == 2:
                     await host.sync_state_write(KEY, {**CHECKPOINT, "projectionVersion": 99})
-                relay.accept({"streamId": "s", "batchSeq": seq, "projectionVersion": 3,
+                relay.accept({"streamId": "s", "batchSeq": seq, "projectionVersion": 4,
                     "operations": [{"kind": "checkpoint.load", "externalSessionId": "native"}]})
                 ack = await asyncio.wait_for(acknowledged.get(), 1)
                 assert ack["checkpoint"] == expected

@@ -24,16 +24,24 @@ async function fixture(run: (f: Awaited<ReturnType<typeof commandRuntime>>) => P
   try { await run(f) } finally { await f.close(); await rm(home, { recursive: true, force: true }) }
 }
 
-test('AA exposes and executes only compact even when UI-dependent commands are registered', async () => fixture(async f => {
-  const { agent, params } = await f.create('compact-only')
+test('AA exposes and executes only the native allowlist even when UI-dependent commands are registered', async () => fixture(async f => {
+  const { agent, params } = await f.create('commands-allowlist')
   const calls: string[] = []
   for (const name of ['about', 'compact', 'export', 'goal', 'plan', 'model', 'file', 'feedback']) {
     f.ctx.commands.register({ name, description: name, handler: () => { calls.push(name); return { kind: 'success' } } })
   }
+  // dsh-btw registers a leading-input command; AA must expose it with its hint.
+  f.ctx.commands.register({ name: 'btw', description: '旁支问答', input: { hint: '问题（留空则重开上次问答）' },
+    handler: () => { calls.push('btw'); return { kind: 'success' } } })
   const list = async (values = {}) => (await f.router.request('session.listCommands', { ...params, ...values }, signal()) as { commands: Descriptor[] }).commands
-  assert.deepEqual((await list()).map(c => c.id), ['compact'])
-  assert.deepEqual((await list({ limit: 1 })).map(c => c.id), ['compact'])
+  assert.deepEqual((await list()).map(c => c.id), ['btw', 'compact'])
+  assert.deepEqual((await list({ limit: 1 })).map(c => c.id), ['btw'])
   assert.deepEqual(await list({ query: 'export' }), [])
+  const btw = (await list({ query: 'btw' }))[0]!
+  assert.equal(btw.id, 'btw')
+  assert.equal(btw.acceptsArgs, true)
+  assert.equal(btw.metadata.ui.kind, 'execute')
+  assert.equal(btw.metadata.ui.argumentHint, '问题（留空则重开上次问答）')
   for (const command of ['about', 'export', 'goal', 'plan', 'model', 'file', 'feedback', 'permission', 'compact-thread']) {
     const result = await f.router.request('session.executeCommand', { ...params, command, raw: `/${command}` }, signal()) as Result
     assert.equal(result.ok, false)
@@ -44,6 +52,10 @@ test('AA exposes and executes only compact even when UI-dependent commands are r
   const result = await f.router.request('session.executeCommand', { ...params, command: 'compact', raw: '/compact' }, signal()) as Result
   assert.equal(result.ok, true)
   assert.deepEqual(calls, ['compact'])
+  const side = await f.router.request('session.executeCommand', { ...params, command: 'btw', raw: '/btw 暗号是什么？' }, signal()) as Result
+  assert.equal(side.ok, true)
+  assert.deepEqual(calls, ['compact', 'btw'])
+  assert.equal(agent.session.snapshotEvents().filter(e => e.type === 'turn/start').length, 0)
 }))
 
 test('AA does not invent compact when the native Agent has no compact command', async () => fixture(async f => {
@@ -217,6 +229,8 @@ test('compiled native Host and actual Python public adapters execute commands ov
       const event = inv.agent.session.append('session/title', { title: 'echo', source: { kind: 'user' }, messageSeqs: [] })
       return { kind: 'success', text: inv.rawInput, sourceEventSeq: event.seq }
     } })
+    f.ctx.commands.register({ name: 'btw', description: '旁支问答', input: { hint: '问题（留空则重开上次问答）' },
+      handler: () => ({ kind: 'success' }) })
     const { stdout } = await promisify(execFile)('uv', ['run', '--frozen', 'python', 'tests/dsh_commands_probe.py', home], {
       cwd: new URL('../../../connector/', import.meta.url), timeout: 20_000,
     })
@@ -224,6 +238,7 @@ test('compiled native Host and actual Python public adapters execute commands ov
     assert.equal(f.ctx.permissionPresets.current(agent.session), 'workspace-write')
     const events = agent.session.snapshotEvents()
     assert.equal(events.filter(e => e.type === 'command/run' && e.data.name === 'compact' && e.data.args?.trim() === 'wait').length, 1)
+    assert.equal(events.filter(e => e.type === 'command/run' && e.data.name === 'btw').length, 1)
     assert.equal(events.filter(e => e.type === 'turn/start').length, 0)
     assert.equal(events.filter(e => e.type === 'user/message').length, 1)
   } finally { await f.ctx.fiber.dispose(); await rm(home, { recursive: true, force: true }) }

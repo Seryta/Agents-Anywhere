@@ -192,6 +192,49 @@ test('compaction keeps original messages and ignores internal informational even
   assert.ok(!items.some(item => item.content.eventType === 'extension/notice'))
 })
 
+test('dsh-btw log-only records fold into one system item and survive turn closure', () => {
+  const btwStart = { type: 'plugin:dsh-btw/start', data: {
+    btwId: 'btw-1', question: '暗号是什么？', provider: 'test', model: 'test',
+  } }
+  const btwEnd = { type: 'plugin:dsh-btw/end', data: {
+    btwId: 'btw-1', answer: '42', provider: 'test', model: 'test',
+  } }
+
+  const pendingSnapshot = log([...start, btwStart, { type: 'turn/end', data: { turn: 1, reason: { kind: 'stop' } } }])
+  const pending = projectHistory(pendingSnapshot, 'platform').find(item => item.source.itemType === 'plugin:dsh-btw/start')!
+  assert.equal(pending.type, 'system')
+  assert.equal(pending.role, 'system')
+  assert.equal(pending.status, 'running')
+  assert.equal(pending.turnId, null, 'turn/end must not close an independent side question')
+  assert.equal(pending.content.kind, 'system')
+  assert.match(String(pending.content.text), /\/btw 暗号是什么？\n\n正在从会话记录回答…/)
+
+  const projection = createProjection('native', 'platform')
+  for (const event of log([...start, btwStart]).events) projection.apply(event)
+  const running = projection.drain().items.find(item => item.source.itemType === 'plugin:dsh-btw/start')!
+  const completedSnapshot = log([...start, btwStart, btwEnd])
+  for (const event of completedSnapshot.events.slice(-1)) projection.apply(event)
+  const completed = projection.drain().items.find(item => item.source.itemType === 'plugin:dsh-btw/end')!
+  assert.equal(completed.id, running.id, 'the end record updates the same timeline item')
+  assert.equal(completed.orderSeq, running.orderSeq)
+  assert.equal(completed.status, 'done')
+  assert.equal(completed.content.kind, 'system')
+  assert.equal(completed.content.text, '/btw 暗号是什么？\n\n42')
+
+  const failed = projectHistory(log([...start, btwStart, { type: 'plugin:dsh-btw/end', data: {
+    btwId: 'btw-1', error: 'provider failed',
+  } }]), 'platform').find(item => item.source.itemType === 'plugin:dsh-btw/end')!
+  assert.equal(failed.status, 'failed')
+  assert.equal(failed.content.kind, 'error')
+  assert.match(String(failed.content.text), /provider failed/)
+
+  const reopened = projectHistory(log([...start, { type: 'plugin:dsh-btw/reopen', data: {
+    btwId: 'btw-2', question: '再问一次', answer: '42',
+  } }]), 'platform').find(item => item.source.itemType === 'plugin:dsh-btw/reopen')!
+  assert.equal(reopened.status, 'done')
+  assert.equal(reopened.content.text, '/btw 再问一次\n\n42')
+})
+
 test('canonical identities and hashes match the shared cross-language fixtures', async () => {
   const fixture = JSON.parse(await readFile(new URL('../../../contracts/dsh-bridge/1.0/fixtures/identity.json', import.meta.url), 'utf8'))
   for (const entry of fixture.sessionIds) assert.equal(sessionId(entry.connectorId, entry.externalSessionId), entry.sessionId)

@@ -8,7 +8,21 @@ import { enrichToolResult, parentToolItem, resultContent, toolContent } from './
 import { json, record, type Data, type ItemStatus, type ItemType, type TimelineItem } from './types.js'
 
 // Bump when replay semantics change so old checkpoints rebuild their timeline.
-export const PROJECTION_VERSION = 3
+export const PROJECTION_VERSION = 4
+
+/** Log-only records written by the dsh-btw plugin (`plugin:dsh-btw/*`).
+ * Keep the type strings and payload keys in sync with the plugin's host half
+ * (the DSH equivalent of pi's `pi.btw` projection contract). */
+const BTW_START = 'plugin:dsh-btw/start'
+const BTW_END = 'plugin:dsh-btw/end'
+const BTW_REOPEN = 'plugin:dsh-btw/reopen'
+
+/** Render one side-question exchange as the system text AA clients already show. */
+function btwText(question: string, answer: string | undefined, error: string | undefined, running: boolean): string {
+  if (error !== undefined) return `/btw ${question}\n\n${error}`
+  if (answer !== undefined) return `/btw ${question}\n\n${answer}`
+  return `/btw ${question}\n\n${running ? '正在从会话记录回答…' : '（没有返回内容）'}`
+}
 
 // Older persisted logs and fixtures can still carry the pre-rc.1 chunk vocabulary.
 type LegacyChunk = { type: 'assistant/chunk', seq: SessionEvent['seq'], time: number,
@@ -37,6 +51,7 @@ export function createProjection(externalId: string, platformId: string, fingerp
   const removed = new Set<string>()
   const items = new Map<string, TimelineItem>()
   const steps = new Map<string, number>()
+  const btwQuestions = new Map<string, string>()
   const drafts = new Map<string, Map<number, { block: ContentBlock, seq: number, event: ProjectionEvent }>>()
   const pendingDrafts = new Map<string, Map<number, { block: ContentBlock, seq: number, event: ProjectionEvent }>>()
   function flushDrafts(): void {
@@ -244,6 +259,23 @@ export function createProjection(externalId: string, platformId: string, fingerp
     } else if (String(event.type).startsWith('compaction/')) {
       put('event', String(event.seq), event, 'marker', 'done', 'system',
         { kind: 'compact', title: '上下文压缩', eventType: event.type, details: json(event.data) })
+    } else if (eventType === BTW_START || eventType === BTW_END || eventType === BTW_REOPEN) {
+      const btwId = typeof data.btwId === 'string' && data.btwId.length > 0 ? data.btwId : undefined
+      if (btwId === undefined) return
+      const recordedQuestion = typeof data.question === 'string' && data.question.trim().length > 0 ? data.question : undefined
+      if (recordedQuestion !== undefined) btwQuestions.set(btwId, recordedQuestion)
+      const question = recordedQuestion ?? btwQuestions.get(btwId) ?? '（问题内容缺失）'
+      const answer = typeof data.answer === 'string' && data.answer.trim().length > 0 ? data.answer : undefined
+      const error = typeof data.error === 'string' && data.error.trim().length > 0 ? data.error : undefined
+      const running = eventType === BTW_START && answer === undefined && error === undefined
+      const failed = !running && (error !== undefined || answer === undefined)
+      const item = put('btw', btwId, event, 'system', running ? 'running' : failed ? 'failed' : 'done', 'system', {
+        kind: failed ? 'error' : 'system',
+        text: btwText(question, answer, error, running),
+      })
+      // A side question is not owned by the active turn: turn/end must not
+      // close a still-running /btw item as interrupted.
+      item.turnId = null
     }
     // Internal and unknown informational events deliberately produce no Timeline item.
   }

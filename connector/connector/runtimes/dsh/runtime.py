@@ -34,6 +34,9 @@ from connector.runtimes.dsh.bridge.client import BridgeClient, BridgeRpcError
 from connector.runtimes.dsh.bridge.sync import SyncRelay
 
 BRIDGE_POLL_INTERVAL_SECONDS = 5.0
+# Native DSH commands AA can expose without a client UI. /btw requires the
+# dsh-btw plugin and returns before its side answer is projected.
+_AA_COMMANDS = frozenset({"compact", "btw"})
 
 
 class DshRuntime(AgentRuntime):
@@ -147,14 +150,14 @@ class DshRuntime(AgentRuntime):
         commands = models.commands(await self._request("session.listCommands", {
             **_session_params(session_id, external_session_id), "query": query, "limit": limit,
         }))
-        return tuple(command for command in commands if command.id == "compact")
+        return tuple(command for command in commands if command.id in _AA_COMMANDS)
 
     async def execute_command(
         self, session_id: str, command: str, external_session_id: str | None = None,
         raw: str | None = None, args: tuple[str, ...] = (),
     ) -> RuntimeCommandResult:
-        if command != "compact":
-            return RuntimeCommandResult(command=command, ok=False, code="unknown_command", message="AA supports only /compact for DSH.")
+        if command not in _AA_COMMANDS:
+            return RuntimeCommandResult(command=command, ok=False, code="unknown_command", message="AA supports only /compact and /btw for DSH.")
         unavailable = await self._commands_unavailable(session_id, external_session_id)
         if unavailable:
             return RuntimeCommandResult(command=command, ok=False, code=unavailable[0], message=unavailable[1])

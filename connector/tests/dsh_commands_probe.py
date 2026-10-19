@@ -28,10 +28,17 @@ async def main(home: Path) -> None:
     runtime._client = client
     session = stable_runtime_session_id("wire", "dsh", "commands-wire")
     try:
-        assert [c.id for c in await runtime.list_commands(session, "commands-wire")] == ["compact"]
+        assert [c.id for c in await runtime.list_commands(session, "commands-wire")] == ["btw", "compact"]
         catalog = await runtime.list_commands(session, "commands-wire", query="compact", limit=1)
         assert len(catalog) == 1 and catalog[0].id == "compact"
         assert catalog[0].metadata["ui"]["acceptsMultiline"] is True
+        btw_catalog = await runtime.list_commands(session, "commands-wire", query="btw", limit=1)
+        assert len(btw_catalog) == 1 and btw_catalog[0].id == "btw"
+        assert btw_catalog[0].accepts_args
+        assert btw_catalog[0].metadata["input"] == {"hint": "问题（留空则重开上次问答）"}
+        btw = await runtime.execute_command(session, "btw", "commands-wire", raw="/btw 暗号是什么？")
+        assert btw.ok and btw.result["executionState"] == "accepted"
+        assert btw.result["commandId"]
         result = await runtime.execute_command(session, "compact", "commands-wire", raw="/compact  first\nsecond  ")
         assert result.ok and result.message == "  first\nsecond  "
         assert result.result["executionState"] == "accepted"

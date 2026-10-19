@@ -22,7 +22,11 @@ export interface CommandCapability {
 }
 const ONLINE_STATUSES = ['idle', 'running', 'waiting', 'pending', 'stopping', 'waiting_approval', 'error', 'blocked']
 
-/** AA exposes only native compact; the registry owns its grammar and side effects. */
+/** Native commands AA can safely expose without a DSH client UI: /compact owns its
+ * grammar and side effects, and /btw (dsh-btw plugin) returns immediately with the
+ * answer delivered later as a log-only timeline item. */
+const AA_NATIVE_COMMANDS = new Set(['compact', 'btw'])
+
 export class RuntimeCommands {
   private readonly instance = randomUUID()
   private revision = 0
@@ -74,7 +78,7 @@ export class RuntimeCommands {
     const query = typeof params.query === 'string' ? params.query.toLocaleLowerCase() : ''
     const agent = await this.agent(id, signal)
     return { commands: registry.list(agent)
-      .filter(item => item.name === 'compact')
+      .filter(item => AA_NATIVE_COMMANDS.has(item.name))
       .filter(item => `${item.name} ${item.description} ${item.input?.hint ?? ''}`.toLocaleLowerCase().includes(query))
       .slice(0, limit).map(item => ({
         id: item.name, title: item.name, description: item.description, aliases: [], scope: 'session', enabled: true,
@@ -94,7 +98,7 @@ export class RuntimeCommands {
     const command = typeof params.command === 'string' ? params.command : ''
     const fail = (code: string, message: string): CommandResult => ({ command, ok: false, code, message, result: {} })
     if (!command || parseCommand(`/${command}`)?.name !== command) return fail('invalid_command', 'Use the native command name from the catalog.')
-    if (command !== 'compact') return fail('unknown_command', 'AA supports only /compact for DSH.')
+    if (!AA_NATIVE_COMMANDS.has(command)) return fail('unknown_command', 'AA supports only /compact and /btw for DSH.')
     const args = params.args === undefined ? [] : params.args
     if (!Array.isArray(args) || args.some(arg => typeof arg !== 'string')) return fail('invalid_command', 'Command arguments must be strings.')
     if (params.attachments !== undefined && (!Array.isArray(params.attachments) || params.attachments.length)) return fail('command_attachments_unsupported', 'AA command attachments are unavailable. Keep attachments in the draft.')

@@ -79,7 +79,7 @@ def test_snapshot_abort_foreign_items_and_duplicate_pages_do_not_publish_partial
 
 
 @pytest.mark.parametrize("reject", [False, True])
-@pytest.mark.parametrize("projection_version", [2, 3])
+@pytest.mark.parametrize("projection_version", [2, 3, 4])
 def test_relay_failure_resubscribes_without_closing_concurrent_rpc(reject, projection_version):
     async def exercise():
         entered, release, acknowledged = asyncio.Event(), asyncio.Event(), asyncio.Event()

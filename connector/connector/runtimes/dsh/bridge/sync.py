@@ -36,7 +36,7 @@ def _checkpoint(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, Mapping):
         return None
     seq, fingerprint = value.get("throughSeq"), value.get("historyHash")
-    if (value.get("version") != 1 or value.get("projectionVersion") not in (2, 3)
+    if (value.get("version") != 1 or value.get("projectionVersion") not in (2, 3, 4)
         or type(seq) is not int or not -1 <= seq <= 9007199254740991
         or type(value.get("settled")) is not bool or not isinstance(fingerprint, str)
         or len(fingerprint) != 64 or any(c not in "0123456789abcdef" for c in fingerprint)):
@@ -296,7 +296,7 @@ class SyncRelay:
             })
             subscription = await self.client.request("runtime.sync.subscribe", {"checkpointVersion": 1})
             projection_version = subscription.get("projectionVersion")
-            if projection_version not in (2, 3):
+            if projection_version not in (2, 3, 4):
                 raise ValueError("Unsupported DSH projection version")
             stream_id, expected = subscription["streamId"], 1
             self.durable_checkpoints = subscription.get("checkpointVersion") == 1

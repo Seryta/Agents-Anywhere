@@ -7,6 +7,7 @@
 ## 可以做什么
 
 - 在其他设备上查看 DSH 会话与运行进度，发送消息或继续已有会话。
+- 在远程会话里用 `/btw` 追问旁支问题；回答以系统消息进入时间线，不写入模型上下文（需在 DSH 侧安装 dsh-btw 插件）。
 - 根据 DSH 和当前会话的能力选择模型、权限与 Agent 模式，发送文字、图片或普通文件，回复输入请求与单次操作审批。
 - 使用 Agents Anywhere Cloud 或自己的服务实例；在插件中查看连接状态、管理本机 Connector 和桥接日志。
 - 如果 Agents Anywhere Desktop 正在运行，转到该应用完成连接；否则可以直接在插件中登录并连接本机设备。Agents Anywhere Desktop 和 DSH Desktop 是两个不同的应用。

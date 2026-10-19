@@ -45,6 +45,8 @@ API key 形如 `mk_<id>_<随机 hex>`，Router 按 id 查表并比对 SHA-256。
 | `refreshSync` | 要求重新捕获一个会话 |
 | `sync` | server stream：先发 `{kind:"subscribed", projectionVersion, checkpointVersion?}`，调用保持打开期间通过 `Sync.ingestBatch` 回传批次 |
 
+投影版本 4 在 3 的基础上把 `dsh-btw` 的旁支问答（`plugin:dsh-btw/start`、`/end`、`/reopen`）投影为独立的 system 条目：它不归属当前回合，回合结束也不会把它标成中断；`/end` 或 `/reopen` 更新同一条目的内容与状态。Connector 接受 2、3、4 三个版本，批次版本必须与订阅返回的版本一致；旧版本检查点会触发完整重捕。
+
 `listModels` 的每个模型在 `metadata` 里带 `provider`（路由用的 provider ID）、`providerName`（显示名）、`model` 和 `modelName`。Connector 据此生成协议的 `group`（`itemDisplayName` 取 `modelName`），客户端按 provider 分组；缺这两个字段的模型不分组。
 
 错误以 1.0 的错误名作为 MeshCall 应用错误码（`SESSION_NOT_FOUND`、`INVALID_PARAMS`、`DSH_SERVICE_UNAVAILABLE`、`PERSISTENCE_ERROR`、`UNSUPPORTED_OPERATION` …），`retryable` 放在错误 details 里。传输错误使用 MeshCall 的 `deadline_exceeded` / `unavailable` / `resource_exhausted`。

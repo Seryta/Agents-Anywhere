@@ -77,8 +77,8 @@ class FakeBridgeClient:
         if method == "getSessionCapabilities":
             return self._capabilities()
         if method == "listCommands":
-            assert params == {"sessionId": "session", "externalSessionId": "native", "query": "compact", "limit": 1}
-            return self._commands()
+            assert params["sessionId"] == "session" and params["externalSessionId"] == "native"
+            return self._commands(str(params.get("query") or ""))
         if method == "executeCommand":
             self.executed.set()
             return await self._execute(params)
@@ -105,7 +105,7 @@ class FakeBridgeClient:
             })
         return {"runtime": "dsh", "sessionId": "session", "revision": 7, "capabilities": capabilities}
 
-    def _commands(self) -> dict[str, Any]:
+    def _commands(self, query: str) -> dict[str, Any]:
         commands = [{
             "id": "compact",
             "title": "compact",
@@ -120,7 +120,19 @@ class FakeBridgeClient:
         }]
         if self.mode == "wide-catalog":
             commands.extend({"id": name, "title": name} for name in ["export", "goal", "permission"])
-        return {"commands": commands}
+        if self.mode == "btw-catalog":
+            # dsh-btw registers a leading-input command; AA exposes it with its hint.
+            commands.append({
+                "id": "btw",
+                "title": "btw",
+                "description": "旁支问答",
+                "acceptsArgs": True,
+                "metadata": {"input": {"hint": "问题（留空则重开上次问答）"}, "attachmentsAvailable": False,
+                    "ui": {"kind": "execute", "acceptsMultiline": True, "allowedStatuses": ["idle", "running"]}},
+            })
+        lowered = query.lower()
+        return {"commands": [command for command in commands
+            if lowered in f'{command["id"]} {command.get("description", "")}'.lower()]}
 
     async def _execute(self, params: dict[str, Any]) -> dict[str, Any]:
         if self.mode == "pending":
@@ -191,6 +203,21 @@ def test_public_catalog_execution_preserves_native_descriptor_and_raw_correlatio
             execution = [request for request in requests if request["method"] == "executeCommand"]
             assert len(execution) == 1
             assert execution[0]["params"] == {"sessionId": "session", "externalSessionId": "native", "command": "compact", "raw": raw, "args": ["ignored"]}
+    asyncio.run(run())
+
+
+def test_btw_is_exposed_and_dispatched_without_a_ui() -> None:
+    async def run() -> None:
+        async with bridge(mode="btw-catalog") as (runtime, requests, _):
+            catalog = await runtime.list_commands("session", "native", query="btw", limit=1)
+            assert [command.id for command in catalog] == ["btw"]
+            assert catalog[0].accepts_args
+            assert catalog[0].metadata["input"] == {"hint": "问题（留空则重开上次问答）"}
+            result = await runtime.execute_command("session", "btw", "native", raw="/btw 暗号是什么？")
+            assert result.ok and result.message == "native acknowledgement"
+            execution = [request for request in requests if request["method"] == "executeCommand"]
+            assert execution[0]["params"]["command"] == "btw"
+            assert execution[0]["params"]["raw"] == "/btw 暗号是什么？"
     asyncio.run(run())
 
 

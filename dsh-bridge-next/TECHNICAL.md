@@ -206,10 +206,15 @@ Python 下载镜像独立于 PyPI 镜像，提供官方源与 npmmirror。首次
 私有 runtime 端点提供 `session.listCommands` 与 `session.executeCommand`。两者使用现有
 `sessionId` / `externalSessionId` 身份检查和原生 source 可用性，通过 Session Controller
 取得该会话的权威 Agent，再调用真实 `commands.list` / `commands.execute`；命令文本不会
-作为普通 prompt 发送。AA 仅开放 `/compact`：目录先过滤出当前 Agent 注册的 `compact`，
-再执行搜索和数量限制；没有注册时返回空列表。Bridge 和 Python Connector 均拒绝其他
-命令名，Connector 还会过滤旧 Bridge 返回的其他命令，避免暴露依赖 DSH 客户端 UI 的入口。
-模型和权限选择继续走现有会话控件及其独立接口。
+作为普通 prompt 发送。AA 开放 `/compact` 与 `/btw`：目录先过滤出当前 Agent 注册的这两个
+命令（`/btw` 需要 DSH 侧安装 dsh-btw 插件），再执行搜索和数量限制；没有注册时返回空列表。
+Bridge 和 Python Connector 均拒绝其他命令名，Connector 还会过滤旧 Bridge 返回的其他命令，
+避免暴露依赖 DSH 客户端 UI 的入口。模型和权限选择继续走现有会话控件及其独立接口。
+
+`/btw` 的 handler 只写 log-only 的 `plugin:dsh-btw/start` 并立即返回，后台回答再写
+`plugin:dsh-btw/end`；Bridge 把这类记录折成同一条 system 时间线（正文
+`/btw 问题\n\n回答`，失败为 error），与 Pi 的 `pi.btw` 投影约定一致，且不进入模型上下文。
+它不占用主 turn，`turn/end` 也不会把仍在回答的旁支条目标成 interrupted。
 
 目录每次从 registry 读取，包含 Agent 的 scoped override，列表
 支持 `query` 和 1–1000 的 `limit`（默认 50）。未提供 registry/controller 的 Host 不启用

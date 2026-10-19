@@ -34,7 +34,7 @@ def timeline_notice():
 
 
 @pytest.mark.parametrize("fail", [False, True])
-@pytest.mark.parametrize("projection_version", [2, 3])
+@pytest.mark.parametrize("projection_version", [2, 3, 4])
 def test_ingestion_precedes_checkpoint_and_ack_and_json_survives_restart(tmp_path, fail, projection_version):
     checkpoint = {**CHECKPOINT, "projectionVersion": projection_version}
     async def run():

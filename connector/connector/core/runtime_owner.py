@@ -195,7 +195,8 @@ def _legacy_process_identity(pid: int) -> str | None:
 def _connector_command(executable: str, arguments: list[str]) -> bool:
     """Recognize the running Connector entry point, not an app or uv parent."""
     name = Path(executable.replace("\\", "/")).name.lower()
-    entry_points = {"anywhere-cli", "agent-connector", "anywhere-cli.exe", "agent-connector.exe"}
+    entry_points = {"anywhere-cli", "agent-connector", "pi-aa-connector",
+                    "anywhere-cli.exe", "agent-connector.exe", "pi-aa-connector.exe"}
     if name in entry_points:
         return True
     if not name.startswith(("python", "pypy")):

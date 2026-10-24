@@ -152,6 +152,15 @@ class CodexRuntimeClient(Protocol):
         self,
         request: CodexInterruptTurnRequest,
     ) -> CodexTurnResult: ...
+    async def answer_side_question(
+        self,
+        question: str,
+        transcript: str,
+        *,
+        cwd: str | None = None,
+        model: str | None = None,
+        provider_id: str | None = None,
+    ) -> str: ...
     async def compact_thread(self, thread_id: str) -> CodexCompactResult: ...
     async def respond(
         self,

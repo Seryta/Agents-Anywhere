@@ -4,6 +4,7 @@ import asyncio
 import errno
 import hashlib
 import importlib
+import os
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -154,8 +155,10 @@ class CodexSdkClient:
         sdk: Any | None = None,
         model_gateway: ModelGateway | None = None,
         client_factory: Callable[[], Any] | None = None,
+        side_question_environment: Mapping[str, str] | None = None,
     ) -> None:
         self._client = client
+        self._side_question_environment = side_question_environment
         self._sdk = sdk
         self._model_gateway = model_gateway
         self._client_factory = client_factory
@@ -667,6 +670,22 @@ class CodexSdkClient:
         result = await turn.interrupt()
         payload = turn_action_result(result) or turn_ref(turn)
         return CodexTurnResult(turn_id=id_of(turn), payload=payload)
+
+    async def answer_side_question(
+        self, question: str, transcript: str, *, cwd: str | None = None,
+        model: str | None = None, provider_id: str | None = None,
+    ) -> str:
+        from connector.runtimes.codex.sdk.side_question import answer_side_question
+
+        await ensure_codex_initialized(self._client)
+        low_level = codex_low_level_client(self._client)
+        if low_level is None:
+            raise RuntimeInvalidRequestError("Codex /btw requires the low-level SDK client.")
+        return await answer_side_question(
+            low_level, question, transcript, cwd=cwd, model=model,
+            provider_id=provider_id, gateway=self._model_gateway,
+            environment=self._side_question_environment,
+        )
 
     async def compact_thread(self, thread_id: str) -> CodexCompactResult:
         await ensure_codex_initialized(self._client)
@@ -1278,6 +1297,7 @@ def sdk_client_from_config(config: RuntimeConfig) -> CodexRuntimeClient:
         sdk=sdk,
         model_gateway=model_gateway,
         client_factory=create_client,
+        side_question_environment={**os.environ, **dict(config.values.get("environment") or {})},
     )
 
 

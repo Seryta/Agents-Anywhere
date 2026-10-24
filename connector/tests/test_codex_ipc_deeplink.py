@@ -345,7 +345,8 @@ def test_catalog_offers_open_in_codex_app_only_with_ipc(monkeypatch: pytest.Monk
     async def run() -> None:
         runtime = _runtime(_Follower([]), _Client())
         catalog = {c.id: c for c in await runtime.list_commands("sess_1", THREAD)}
-        assert set(catalog) == {"compact", "open-in-codex-app", "kill-chatgpt"}
+        # btw is transcript-only, so it stays in the catalog beside the IPC commands.
+        assert set(catalog) == {"btw", "compact", "open-in-codex-app", "kill-chatgpt"}
         command = catalog["open-in-codex-app"]
         assert command.enabled and "running" in command.metadata["ui"]["allowedStatuses"]
         assert set(command.aliases) == {"open-in-codex", "codex-app"}
@@ -356,7 +357,7 @@ def test_catalog_offers_open_in_codex_app_only_with_ipc(monkeypatch: pytest.Monk
         assert unloaded["open-in-codex-app"].disabled_reason == "session_unloaded"
 
         plain = CodexRuntime(config=RuntimeConfig(runtime="codex", revision=3, values={"codexHome": "/x"}), host=_Host(), client=None)
-        assert [c.id for c in await plain.list_commands("sess_1", THREAD)] == ["compact", "kill-chatgpt"]
+        assert [c.id for c in await plain.list_commands("sess_1", THREAD)] == ["btw", "compact", "kill-chatgpt"]
 
     asyncio.run(run())
 

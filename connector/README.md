@@ -8,6 +8,16 @@ the workspace and agent runtimes, connects to the server over HTTP/WebSocket,
 executes connector RPC locally, and uploads normalized runtime/session state
 back to the backend.
 
+## Codex `/btw` 旁支问答
+
+共享 Connector 的 Codex 会话支持 `/btw 你的问题`。主任务运行、等待输入或审批时也可执行；命令立即确认，中文答案随后更新同一条 system 时间线消息。单独发送 `/btw` 会重开上次已完成的问答，不再次调用模型。
+
+旁支只读取最近 30 条原生记录，工具结果每条最多 800 字符，总转录最多 16,000 字符；不读取文件、不执行工具，也不把问题或答案写入 Codex 模型历史。一次 Responses 请求显式发送 `tools: []`、`tool_choice: none` 和 `store: false`。沿用当前选择的模型、AA 模型网关或 Codex 的 Responses 提供方；普通 API key、环境变量凭据和可由 App Server 导出的 ChatGPT 登录可用。AWS 等非 Responses 提供方及不可导出的托管凭据会明确报错，不切换其他账号或提供方。
+
+问答记录保存在 Connector 自有的运行时状态中，不修改原生 Codex 会话文件。共享服务重启后仍可查看、重开；未完成问答标记为中断。每会话只运行一条旁支，120 秒超时，失败后可重试。实时推送失败时，下一次历史同步恢复同一条消息。当前只扩展 AA 入口，不修改 Codex CLI 的斜杠命令或终端界面。
+
+容器验证见 Pi 集成仓库的维护手册。`tests/test_codex_btw_live.py` 使用真实固定版 Codex 和本地确定性 Responses 服务，验证主任务未完成时旁支已经到达、最终历史不重复且不包含旁支问题；无需真实账号或付费调用。普通登录及网关的真实云端调用须另行验收。
+
 ## Layout
 
 ```text

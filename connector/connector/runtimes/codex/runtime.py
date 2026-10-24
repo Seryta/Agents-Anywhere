@@ -54,6 +54,7 @@ from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
 )
+from connector.runtimes.codex.domain.selections import model_settings_from_selection
 from connector.runtimes.codex.ipc import (
     CodexIpcClient,
     CodexIpcOwnerService,
@@ -74,6 +75,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
 )
 from connector.runtimes.codex.sessions.reader import CodexSessionReader
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.turns.btw import CodexSideQuestions
 from connector.runtimes.codex.turns.command_input import command_input
 from connector.runtimes.codex.turns.controller import CodexTurnController
 
@@ -153,7 +155,14 @@ class CodexRuntime(AgentRuntime):
             ensure_started=self.start,
             get_model_list_result=self._get_model_list_result,
         )
+        self._side_questions = CodexSideQuestions(
+            self.host,
+            self.client,
+            self.start,
+            self._selected_side_model,
+        )
         self._session_reader = CodexSessionReader(
+            side_question_items=self._side_questions.items,
             host=self.host,
             client=self.client,
             session_states=self._session_states,
@@ -166,6 +175,7 @@ class CodexRuntime(AgentRuntime):
             notice_handler=self._notifications.notice_handler,
         )
         self._turns = CodexTurnController(
+            side_questions=self._side_questions,
             host=self.host,
             client=self.client,
             session_states=self._session_states,
@@ -191,10 +201,15 @@ class CodexRuntime(AgentRuntime):
         )
 
     async def start(self) -> None:
+        was_started = self._lifecycle.started
         await self._lifecycle.start()
+        if not was_started:
+            # A restarted runtime must accept new side questions again.
+            self._side_questions.stopping = False
         await self._start_ipc()
 
     async def stop(self) -> None:
+        await self._side_questions.stop()
         if self.ipc_owner is not None:
             self.ipc_owner.detach()
         if self.ipc_service is not None:
@@ -730,6 +745,14 @@ class CodexRuntime(AgentRuntime):
             },
         )
 
+    async def _selected_side_model(self, session_id: str) -> str | None:
+        state = self._session_states.get(session_id)
+        selection = state.selections.get("model") if state is not None else None
+        settings = await model_settings_from_selection(
+            selection, self._catalogs.list_model_catalog
+        )
+        return settings.model
+
     async def get_config(self) -> RuntimeConfig:
         return self.config
 
@@ -813,9 +836,7 @@ class CodexRuntime(AgentRuntime):
         await self._bind_state_session(session_id, external_session_id)
         state = self._session_states.get(session_id)
         if state is None and external_session_id is not None:
-            state = self._session_states.get_by_external_session_id(
-                external_session_id
-            )
+            state = self._session_states.get_by_external_session_id(external_session_id)
         context = codex_capability_context(
             connector_id=self.host.connector_id,
             revision=self.config.revision,

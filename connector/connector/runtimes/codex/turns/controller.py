@@ -21,6 +21,7 @@ from connector.runtimes.codex.domain.pending_messages import (
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
 from connector.runtimes.codex.turns.actions import CodexTurnActions
+from connector.runtimes.codex.turns.btw import CodexSideQuestions
 from connector.runtimes.codex.turns.commands import CodexCommandController
 from connector.runtimes.codex.turns.interactions import CodexInteractionController
 from connector.runtimes.codex.turns.selections import CodexSelectionController
@@ -44,6 +45,7 @@ class CodexTurnController:
     list_permission_catalog: ListPermissionCatalog
     pending_messages: PendingClientMessageRegistry
     timeline: CodexTimelineAccumulator
+    side_questions: CodexSideQuestions | None = None
     actions: CodexTurnActions = field(init=False)
     commands: CodexCommandController = field(init=False)
     interactions: CodexInteractionController = field(init=False)
@@ -64,6 +66,7 @@ class CodexTurnController:
             list_permission_catalog=self.list_permission_catalog,
         )
         self.commands = CodexCommandController(
+            side_questions=self.side_questions,
             client=self.client,
             states=self.session_states,
             source_states=self.source_states,

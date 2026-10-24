@@ -19,6 +19,7 @@ from connector.runtime_protocol import (
 )
 from connector.runtimes.codex.domain.commands import list_codex_commands
 from connector.runtimes.codex.sdk.runtime_client import CodexRuntimeClient
+from connector.runtimes.codex.turns.btw import CodexSideQuestions
 from connector.runtimes.codex.turns.command_input import command_input
 
 
@@ -28,6 +29,7 @@ class CodexCommandController:
     states: RuntimeSessionStateCache
     source_states: RuntimeSessionSourceStateCache
     ensure_started: Callable[[], Awaitable[None]]
+    side_questions: CodexSideQuestions | None = None
 
     def catalog(
         self,
@@ -73,7 +75,11 @@ class CodexCommandController:
                     code="unknown_command",
                     message=f"Unknown Codex command: /{requested}",
                 )
-            if text.strip():
+            if name == "btw" and len(text) > 4096:
+                raise ValueError(
+                    "The side question must contain at most 4096 characters"
+                )
+            if name != "btw" and text.strip():
                 raise ValueError("This command takes no arguments")
         except (ValueError, TypeError) as exc:
             return RuntimeCommandResult(
@@ -85,6 +91,10 @@ class CodexCommandController:
                 ok=False,
                 code="command_unavailable",
                 message=descriptor.disabled_reason,
+            )
+        if name == "btw":
+            return await self.side_questions.execute(
+                session_id, external_session_id, text.strip()
             )
         await self.ensure_started()
         try:

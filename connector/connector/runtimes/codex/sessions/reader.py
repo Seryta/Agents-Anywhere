@@ -18,6 +18,7 @@ from connector.runtime_protocol import (
     RuntimePermissionCatalog,
     RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
+    RuntimeTimelineItem,
     SessionSourceObservation,
     SessionSourceState,
 )
@@ -70,6 +71,9 @@ class CodexSessionReader:
     list_permission_catalog: ListPermissionCatalog
     pending_messages: PendingClientMessageRegistry | None = None
     timeline: CodexTimelineAccumulator | None = None
+    side_question_items: (
+        Callable[[str, str], Awaitable[tuple[RuntimeTimelineItem, ...]]] | None
+    ) = None
     _pending_sync_states: dict[str, tuple[str, dict[str, Any]]] = field(
         default_factory=dict,
         init=False,
@@ -184,6 +188,19 @@ class CodexSessionReader:
                     sort_keys=True,
                 ).encode()
             ).hexdigest()
+        if self.side_question_items is not None:
+            side_items = await self.side_question_items(
+                codex_sessions.stable_session_id(
+                    getattr(self.host, "session_namespace", self.host.connector_id), thread_id
+                ),
+                thread_id,
+            )
+            if side_items and sync_marker is not None:
+                sync_marker = hashlib.sha256(
+                    json.dumps([
+                        sync_marker, [(item.id, item.content_hash) for item in side_items]
+                    ]).encode()
+                ).hexdigest()
         sync_key = _session_sync_key(thread_id)
         previous_sync = await self.host.sync_state_read(sync_key)
         previous_marker = (
@@ -279,6 +296,12 @@ class CodexSessionReader:
             items = ()
         else:
             items = tuple(item for item in snapshot.items if item.type not in {"turn.start", "turn.end"})
+        if (
+            indexed is not None
+            and self.side_question_items is not None
+            and external_session_id is not None
+        ):
+            items += await self.side_question_items(session_id, external_session_id)
         fingerprints = dict(prefix)
         fingerprints.update({
             item.id: hashlib.sha256(json.dumps(asdict(item), sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
@@ -544,6 +567,10 @@ class CodexSessionReader:
                 limit=limit,
                 pending_messages=self.pending_messages,
             )
+        if self.side_question_items is not None:
+            items += await self.side_question_items(session_id, external_session_id)
+            if limit is not None and limit > 0:
+                items = items[-limit:]
         project_elapsed_ms = (time.monotonic() - project_started_at) * 1000
         logger.info(
             "codex session snapshot built session_id={} external_session_id={} limit={} items={} read_elapsed_ms={:.1f} project_elapsed_ms={:.1f}",

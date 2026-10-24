@@ -21,11 +21,11 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_catalog_exposes_only_compact_without_ipc():
+def test_catalog_exposes_compact_and_btw_without_ipc():
     async def check():
         runtime, client, _ = await runtime_fixture()
         catalog = {c.id: c for c in await runtime.list_commands("sess_1", "thread_1")}
-        assert set(catalog) == {"compact"}
+        assert set(catalog) == {"btw", "compact"}
         assert all(c.enabled for c in catalog.values())
         assert catalog["compact"].metadata["ui"] == {
             "kind": "execute",

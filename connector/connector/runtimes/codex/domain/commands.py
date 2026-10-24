@@ -1,4 +1,4 @@
-"""The compact command supported by AA's native Codex runtime."""
+"""Commands supported by AA's Codex runtime, including transcript-only side questions."""
 
 from connector.runtime_protocol import RuntimeCommand
 
@@ -22,7 +22,16 @@ def list_codex_commands(
         reason = "session_unloaded"
     elif source_availability in {"archived", "unavailable", "deleted", "missing"}:
         reason = f"session_{source_availability}"
-    elif status not in IDLE:
+    side_reason = reason
+    if side_reason is None and status not in (
+        *IDLE,
+        "running",
+        "waiting",
+        "waiting_approval",
+        "blocked",
+    ):
+        side_reason = f"session_{status}"
+    if reason is None and status not in IDLE:
         reason = f"session_{status}"
     command = RuntimeCommand(
         id="compact",
@@ -39,10 +48,32 @@ def list_codex_commands(
             }
         },
     )
+    side_command = RuntimeCommand(
+        id="btw",
+        title="By the way",
+        description="从当前会话记录回答旁支问题，不打断主任务。",
+        accepts_args=True,
+        enabled=side_reason is None,
+        disabled_reason=side_reason,
+        metadata={
+            "ui": {
+                "kind": "execute",
+                "argumentHint": "问题（留空则重开上次问答）",
+                "allowedStatuses": [
+                    *IDLE,
+                    "running",
+                    "waiting",
+                    "waiting_approval",
+                    "blocked",
+                ],
+                "acceptsMultiline": True,
+            }
+        },
+    )
     needle = (query or "").strip().casefold()
     return tuple(
         c
-        for c in (command,)
+        for c in (side_command, command)
         if not needle
         or needle
         in " ".join((c.id, c.title, c.description or "", *c.aliases)).casefold()

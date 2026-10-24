@@ -16,11 +16,11 @@ from connector.runtime_protocol import (
     RuntimeIdentity,
     RuntimeModelCatalog,
     RuntimeOperationResult,
-    RuntimeUnsupportedError,
     RuntimePermissionCatalog,
     RuntimeSessionSourceStateCache,
     RuntimeSessionStateCache,
     RuntimeTimelineSnapshot,
+    RuntimeUnsupportedError,
     SessionMeta,
     SessionNotice,
     SessionState,
@@ -36,6 +36,7 @@ from connector.runtimes.codex.domain.notices import CodexNoticeRegistry
 from connector.runtimes.codex.domain.pending_messages import (
     PendingClientMessageRegistry,
 )
+from connector.runtimes.codex.domain.selections import model_settings_from_selection
 from connector.runtimes.codex.lifecycle.runtime_lifecycle import CodexRuntimeLifecycle
 from connector.runtimes.codex.notifications import CodexNotificationProjector
 from connector.runtimes.codex.sdk.runtime_client import (
@@ -44,6 +45,7 @@ from connector.runtimes.codex.sdk.runtime_client import (
 )
 from connector.runtimes.codex.sessions.reader import CodexSessionReader
 from connector.runtimes.codex.timeline.accumulator import CodexTimelineAccumulator
+from connector.runtimes.codex.turns.btw import CodexSideQuestions
 from connector.runtimes.codex.turns.controller import CodexTurnController
 
 
@@ -92,7 +94,14 @@ class CodexRuntime(AgentRuntime):
             ensure_started=self.start,
             get_model_list_result=self._get_model_list_result,
         )
+        self._side_questions = CodexSideQuestions(
+            self.host,
+            self.client,
+            self.start,
+            self._selected_side_model,
+        )
         self._session_reader = CodexSessionReader(
+            side_question_items=self._side_questions.items,
             host=self.host,
             client=self.client,
             session_states=self._session_states,
@@ -104,6 +113,7 @@ class CodexRuntime(AgentRuntime):
             timeline=self._timeline,
         )
         self._turns = CodexTurnController(
+            side_questions=self._side_questions,
             host=self.host,
             client=self.client,
             session_states=self._session_states,
@@ -126,10 +136,22 @@ class CodexRuntime(AgentRuntime):
         )
 
     async def start(self) -> None:
+        was_started = self._lifecycle.started
         await self._lifecycle.start()
+        if not was_started:
+            self._side_questions.stopping = False
 
     async def stop(self) -> None:
+        await self._side_questions.stop()
         await self._lifecycle.stop()
+
+    async def _selected_side_model(self, session_id: str) -> str | None:
+        state = self._session_states.get(session_id)
+        selection = state.selections.get("model") if state is not None else None
+        settings = await model_settings_from_selection(
+            selection, self._catalogs.list_model_catalog
+        )
+        return settings.model
 
     async def get_config(self) -> RuntimeConfig:
         return self.config
@@ -206,9 +228,7 @@ class CodexRuntime(AgentRuntime):
 
         state = self._session_states.get(session_id)
         if state is None and external_session_id is not None:
-            state = self._session_states.get_by_external_session_id(
-                external_session_id
-            )
+            state = self._session_states.get_by_external_session_id(external_session_id)
         context = codex_capability_context(
             connector_id=self.host.connector_id,
             revision=self.config.revision,
@@ -363,7 +383,9 @@ class CodexRuntime(AgentRuntime):
         query: str | None = None,
         limit: int = 50,
     ) -> tuple[RuntimeCommand, ...]:
-        return self._turns.commands.catalog(session_id, external_session_id, query, limit)
+        return self._turns.commands.catalog(
+            session_id, external_session_id, query, limit
+        )
 
     async def execute_command(
         self,

@@ -46,4 +46,3 @@ docs/reference/*
 _reference/*
 !_reference/httpx-s3-client/
 !_reference/httpx-s3-client/**
-.agent/

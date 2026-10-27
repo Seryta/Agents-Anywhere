@@ -272,3 +272,19 @@ tests/                 单元及集成测试
 ```
 
 Host 输出 `lib/index.js`，Client 输出 DSH 模块加载格式的 `lib/client.js`，不能当独立网页打开。开发依赖统一锁定 Harness `0.2.1-rc.2`；Cordis、Typert 与 Schemastery 使用 Host 提供的 peer 依赖，以免破坏服务类型身份。DSH 只按 `@deepseek-ai/dsh` 与 `@deepseek-ai/dsh-*` peer 判断插件兼容性（预发布版本参与范围匹配），因此 Typert peer 的范围就是插件声明支持的 DSH 版本范围：同一 minor 内的新 rc 和正式版无需改声明，升级到新 minor 前需要重新验证并放宽上限。握手上报的 `runtimeVersion` 读取 Host 实际提供的 Typert 包版本，`bridgeVersion` 读取插件自身 `package.json`。依赖、构建产物和锁文件遵循仓库现有忽略规则。
+
+
+## 外部公共服务集成
+
+配置 `connectorServicePath` 后，OnboardingManager 使用 `ExternalConnector`，通过
+[公共服务会合契约](../contracts/connector-service/v1/README.md) 连接常驻服务：先读 0600
+会合文件拿到 Router 端点与 `service` 角色密钥，再用 MeshCall 调用 `aa.local.v2.Shared`
+（状态、身份、`attachAccount`、start/stop/restart、状态事件流）与 `aa.local.v2.Logs`。
+它不构建 Python 环境，不写私有 Connector 配置，也不读取旧绑定中的设备 token。
+账号绑定委托 `attachAccount`，服务验证账号与设备归属并唯一持有凭据。
+管理客户端断开不触发 stop；只有显式 controlConnector 操作才调用共享服务 stop/restart。
+服务连接失效后按固定间隔重新连接，状态与日志均来自真实服务接口。
+
+生成的客户端来自服务定义：`uv run meshcall generate connector.management.service:SharedService`
+输出到 `src/host/generated/connector-shared.ts`。改动服务方法后必须重新生成并提交；
+调用方不要手写协议字段。

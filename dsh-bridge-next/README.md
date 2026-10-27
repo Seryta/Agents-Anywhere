@@ -114,3 +114,28 @@ dsh plugin --profile desktop add @agents-anywhere/dsh-bridge-next
 本仓库源码和 npm 已发布包可能处于不同版本。源码构建、链接安装、headless 检查、配置和实现细节见[技术说明](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/TECHNICAL.md)。
 
 [开发计划](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/DEVELOPMENT_PLAN.md) · [Onboarding 方案](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/ONBOARDING_PLAN.md) · [验证记录](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/dsh-bridge-next/VERIFICATION.md) · [Agents Anywhere 使用文档](https://github.com/anywhere-labs/Agents-Anywhere/blob/main/docs/README.md)
+
+
+## 连接已有公共 Connector
+
+此集成版本支持在插件配置中指定绝对路径 `connectorServicePath`，连接由 systemd
+托管的 `anywhere-cli serve`（默认会合文件 `~/.agents-anywhere/connector-service`）。
+启用后，设备身份和 Connector 凭据由公共服务唯一管理；插件保留账号授权和官方 DSH
+Bridge，普通登录不撤销已有凭据、不重复注册设备。
+
+插件重载、退出 DSH、退出账号及重置插件只解除本机管理连接；共享服务和其他 Agent
+继续运行。面板主动停止或重启会影响该设备的全部 Runtime，界面会显示这一范围。
+Python 镜像、uv 路径及同步设置由公共服务管理，外部模式不显示内置 Connector 安装设置。
+日志面板读取公共服务的 `aa.local.v2.Logs`（分段文件，默认最多 10000 条 / 32 MiB / 7 天），
+长期日志同样落在 `~/.agents-anywhere/logs/`。
+
+此模式要求同版本的 Connector 会合协议 v1（MeshCall 0.3.0），仅支持 Unix socket 与
+Windows 命名管道。服务不可用时明确报错，不启动内置 Connector 或注册第二个设备。
+账号或服务器与已绑定设备不一致时拒绝替换，设备删除和凭据失效保留显式恢复流程。
+使用原版内置托管模式时不配置此字段。
+
+
+更新此 DSH 插件的代码后，重新安装 tgz 并重启对应 DSH 实例即可；Pi 与其他 Runtime 继续运行。
+更新公共 Connector 或 Pi Python 适配层则需要重启共享服务进程。面板「重启 Connector」
+仅重建同一 Python 进程内的后端连接，虽然会影响全部 Runtime，但不保证重载升级的 Python 模块。
+设备账号与配对配置不需要因普通升级而重建。

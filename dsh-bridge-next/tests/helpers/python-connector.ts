@@ -16,7 +16,10 @@ export async function recordConnectorId(home: string, id: string): Promise<void>
 }
 
 /** Real CLI/RPC entry point with only the remote backend replaced by a wait. */
-export function launchConnector(home: string, kind: string, mode: 'rpc' | 'start' = 'rpc') {
+/** The shared service's rendezvous, as `anywhere-cli serve --service` publishes it. */
+export const rendezvousPath = (home: string): string => join(home, 'connector-service')
+
+export function launchConnector(home: string, kind: string, mode: 'rpc' | 'start' | 'serve' = 'rpc') {
   const hook = join(home, 'test-python')
   mkdirSync(hook, { recursive: true })
   const code = `import asyncio, os, sys
@@ -33,6 +36,7 @@ BackendRpcClient.run_forever=fake_backend
   catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
   const args = ['-u', '-m', 'connector.cli', mode, '--config', join(home, 'private', kind, 'connector.json')]
   if (mode === 'start') args.push('--server-url', 'https://example.test', '--connector-id', 'cli-id', '--connector-token', 'fixture')
+  if (mode === 'serve') args.push('--service', rendezvousPath(home))
   const child = spawn(python, args, {
     cwd: connectorProject,
     env: { ...process.env, AA_CONNECTOR_OWNER_KIND: kind, AA_TEST_CONNECTOR_HOME: home, PYTHONPATH: [hook, connectorProject].join(delimiter) },
@@ -89,7 +93,8 @@ BackendRpcClient.run_forever=fake_backend
     async close(crash = false) {
       if (child.exitCode !== null || child.signalCode !== null) return
       const exited = once(child, 'exit')
-      if (crash || mode === 'start') child.kill(crash ? 'SIGKILL' : 'SIGINT')
+      // `serve` publishes its rendezvous and runs until a signal, like the systemd unit.
+      if (crash || mode === 'start' || mode === 'serve') child.kill(crash ? 'SIGKILL' : 'SIGINT')
       else child.stdin.end()
       await exited
       await mesh?.close().catch(() => undefined)

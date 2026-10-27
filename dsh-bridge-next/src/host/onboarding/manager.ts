@@ -5,10 +5,11 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { CLOUD_API_BASE_URL, type ConnectionSettings, type DesktopDetection, type DesktopLaunch, type DeviceRecovery, type DeviceRecoveryAction, type DeviceRecoveryResult, type FlowStage, type LoginRequest, type OnboardingSnapshot } from '../../contracts/index.js'
 import { resolveOnboardingUrl, resolveWebAppUrl } from '../../contracts/web-address.js'
 import { AccountApi, ApiError, publicProfile, type Account } from '../account/api.js'
-import { DeviceRecoveryRequired, ensureBinding, readBoundDevice, recoverBinding, verifyBoundDevice, type BoundDevice } from '../account/binding.js'
+import { DeviceRecoveryRequired, ensureBinding, readBoundDevice, recoverBinding, verifyBoundDevice, type BoundDevice, type DeviceIdentity } from '../account/binding.js'
 import { checkServer, normalizeServerOrigin, resolveOAuthWebOrigin } from '../account/server.js'
 import type { ResolvedConfig } from '../config.js'
 import { ConnectorCredentialError, SourceConnector, type ConnectorProcess } from '../connector/process.js'
+import { ExternalConnector } from '../connector/external.js'
 import { detectDesktop } from '../desktop/detect.js'
 import { desktopOnboardingUrl, launchDesktop, newDesktopFlowId, type DesktopLauncher } from '../desktop/launch.js'
 import type { LocalMachineRegistry } from '../desktop/machine-state.js'
@@ -58,7 +59,7 @@ export class OnboardingManager {
   }
   private settings: ConnectionSettings
   private account: Account | null = null
-  private binding: BoundDevice | null = null
+  private binding: DeviceIdentity | null = null
   private recovery: DeviceRecovery | null = null
   private recoveryCheck: Promise<void> | null = null
   private recoveryController: AbortController | null = null
@@ -94,15 +95,19 @@ export class OnboardingManager {
     this.connectorSettings = new ConnectorSettingsStore(config, dependencies.systemLanguages)
     this.logOutput = dependencies.logOutput ?? new RpcLogOutput(512, 'plugin')
     this.diagnostics = dependencies.diagnostics ?? new RuntimeDiagnostics(this.logOutput, {}, 'dsh-plugin')
-    this.connector = dependencies.connector ?? new SourceConnector(
-      config,
-      undefined,
-      () => this.connectorSettings.get(),
-      undefined,
-      undefined,
-      this.diagnostics,
-      this.logOutput,
-    )
+    // A shared service owns the Connector when its rendezvous is configured;
+    // this plugin then manages that service instead of provisioning its own.
+    this.connector = dependencies.connector ?? (config.connectorServicePath
+      ? new ExternalConnector(config.connectorServicePath)
+      : new SourceConnector(
+        config,
+        undefined,
+        () => this.connectorSettings.get(),
+        undefined,
+        undefined,
+        this.diagnostics,
+        this.logOutput,
+      ))
     this.detect = dependencies.detect ?? detectDesktop
     this.launchDesktop = dependencies.launchDesktop ?? launchDesktop
     this.apiFactory = dependencies.api ?? (base => new AccountApi(base))
@@ -161,7 +166,7 @@ export class OnboardingManager {
         await writeJson(join(this.config.stateRoot, 'settings.json'), this.settings)
       }
       if (this.account?.apiBaseUrl !== this.settings.apiBaseUrl) this.account = null
-      if (this.account) this.binding = await readBoundDevice(this.config.stateRoot, this.account)
+      if (this.account && !this.connector.external) this.binding = await readBoundDevice(this.config.stateRoot, this.account)
       this.roleTimer = setInterval(() => {
         const wasBlocked = this.desktop.status !== 'absent'
         void this.refreshRole().then(() => {
@@ -321,10 +326,11 @@ export class OnboardingManager {
     if (!account) throw new Error('请先完成登录。')
     signal.throwIfAborted()
     this.setProgress('pairing', '登录成功，正在连接本机设备…')
-    this.binding = await ensureBinding(this.config.stateRoot, account, api, signal, {
-      ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
-      renew: Boolean(code),
-    })
+    this.binding = this.connector.bindAccount ? await this.connector.bindAccount(account, signal)
+      : await ensureBinding(this.config.stateRoot, account, api, signal, {
+        ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
+        renew: Boolean(code),
+      })
     this.recovery = null
     await this.requireStandalone()
     signal.throwIfAborted()
@@ -414,8 +420,9 @@ export class OnboardingManager {
         await this.requireStandalone()
         controller.signal.throwIfAborted()
         this.setProgress('pairing', action === 'recreate' ? '正在重新创建设备…' : '正在恢复设备连接…')
-        this.binding = await recoverBinding(this.config.stateRoot, account, this.apiFactory(account.apiBaseUrl), controller.signal,
-          recovery.connectorId, action)
+        this.binding = this.connector.bindAccount ? await this.connector.bindAccount(account, controller.signal, action)
+          : await recoverBinding(this.config.stateRoot, account, this.apiFactory(account.apiBaseUrl), controller.signal,
+            recovery.connectorId, action)
         this.recovery = null
         await this.requireStandalone()
         controller.signal.throwIfAborted()
@@ -469,6 +476,16 @@ export class OnboardingManager {
       await this.requireStandalone()
       if (!['start', 'stop', 'restart'].includes(action)) throw new Error('不支持的 Connector 操作。')
       await this.cancelFlow()
+      if (this.connector.external && this.connector.controlRuntime) {
+        // The shared service owns its process: these actions change every Agent.
+        this.requireAccount()
+        await this.connector.prepare()
+        await this.connector.controlRuntime(action)
+        this.setProgress(action === 'stop' ? 'idle' : 'ready', action === 'stop'
+          ? '共享 Connector 已停止，所有 Agent 的连接已停止。'
+          : '共享 Connector 已连接。')
+        return null
+      }
       if (action === 'stop') {
         await this.connector.stop()
         this.setProgress('idle', 'Connector 已停止。')
@@ -493,10 +510,11 @@ export class OnboardingManager {
     try {
       const api = this.apiFactory(account.apiBaseUrl)
       this.setProgress('pairing', '正在检查本机设备…')
-      this.binding = this.binding ? await verifyBoundDevice(this.binding, account, api, controller.signal)
-        : await ensureBinding(this.config.stateRoot, account, api, controller.signal, {
-          ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
-        })
+      this.binding = this.connector.bindAccount ? await this.connector.bindAccount(account, controller.signal)
+        : this.binding?.connectorToken ? await verifyBoundDevice(this.binding as BoundDevice, account, api, controller.signal)
+          : await ensureBinding(this.config.stateRoot, account, api, controller.signal, {
+            ...(this.dependencies.machineState ? { machineState: this.dependencies.machineState } : {}),
+          })
       await this.requireStandalone()
       controller.signal.throwIfAborted()
       if (this.disposed) throw new Error('插件已关闭。')
@@ -518,6 +536,7 @@ export class OnboardingManager {
   saveConnectorSettings(input: ConnectorSettings): Promise<null> {
     return this.serial(async () => {
       await this.requireStandalone()
+      if (this.connector.external) throw new Error('共享 Connector 的运行设置由常驻服务统一管理。')
       if (this.stage === 'authorizing' || this.stage === 'pairing' || this.stage === 'starting') throw new Error('连接正在进行，请完成或取消后再保存设置。')
       const next = validateConnectorSettings(input)
       const previous = this.connectorSettings.get()
@@ -554,7 +573,7 @@ export class OnboardingManager {
     return this.serial(async () => {
       await this.requireStandalone()
       if (typeof forceLocal !== 'boolean') throw new Error('重置参数无效。')
-      if (this.binding && this.account && !forceLocal) {
+      if (this.binding && this.account && !forceLocal && !this.connector.external) {
         try {
           // Reuse Desktop's revoke-and-discard semantics. A failed revoke leaves
           // local credentials intact, allowing retry or a separate local-only reset.
@@ -568,7 +587,7 @@ export class OnboardingManager {
       await this.connector.stop()
       this.account = null; this.binding = null; this.recovery = null; this.profileCheckedAt = 0
       // Never remove stateRoot itself, the shared Connector record, or the DSH runtime.
-      for (const path of ['account.json', 'settings.json', 'bindings', 'connector', 'logs']) {
+      for (const path of this.connector.external ? ['account.json', 'settings.json', 'bindings', 'logs'] : ['account.json', 'settings.json', 'bindings', 'connector', 'logs']) {
         await rm(join(this.config.stateRoot, path), { force: true, recursive: true })
       }
       this.settings = { apiBaseUrl: this.config.apiBaseUrl }
@@ -731,9 +750,10 @@ export class OnboardingManager {
       connectorId: this.binding?.connectorId ?? null, connectorRunning: this.connector.running, flowId: this.flow?.id ?? null,
       deviceRecovery: this.recovery ? { ...this.recovery } : null,
       connector: {
+        mode: this.connector.external ? 'external' : 'managed',
         settings: this.connectorSettings.get(), resolvedUvPath: this.resolvedUvPath,
         dataPath: join(this.config.stateRoot, 'connector'), logsPath: this.connector.logsPath ?? '',
-        canOpenFolders: canOpenFolders(), deviceName: this.binding?.name ?? null,
+        canOpenFolders: !this.connector.external && canOpenFolders(), deviceName: this.binding?.name ?? null,
         lastError: this.connector.lastError ?? null,
       },
     }

@@ -10,6 +10,7 @@ export interface Config {
   apiBaseUrl?: string
   stateRoot?: string
   connectorSourceDir?: string
+  connectorServicePath?: string
   uvPath?: string
 }
 
@@ -18,6 +19,7 @@ export const Config: z<Config> = z.object({
   apiBaseUrl: z.string().default(CLOUD_API_BASE_URL),
   stateRoot: z.string(),
   connectorSourceDir: z.string(),
+  connectorServicePath: z.string(),
   uvPath: z.string(),
 })
 
@@ -26,6 +28,7 @@ export interface ResolvedConfig extends ConnectionSettings {
   stateRoot: string
   legacyStateRoot?: string
   connectorSourceDir: string
+  connectorServicePath?: string
   uvPath: string
 }
 
@@ -49,6 +52,7 @@ export function legacyBridgeDirectory(config: Config): string | undefined {
 
 export function resolveConfig(config: Config): ResolvedConfig {
   if (config.dshHome !== undefined && !isAbsolute(config.dshHome)) throw new Error('DSH_HOME 必须是绝对路径。')
+  if (config.connectorServicePath !== undefined && !isAbsolute(config.connectorServicePath)) throw new Error('共享 Connector 会合文件必须是绝对路径。')
   const root = stateRoot(config)
   const connectorSourceDir = config.connectorSourceDir ?? fileURLToPath(new URL('./bundled-connector/', import.meta.url))
   if (!isAbsolute(root) || !isAbsolute(connectorSourceDir)) throw new Error('数据目录和 Connector 源码目录必须是绝对路径。')
@@ -57,6 +61,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     stateRoot: root,
     ...(config.stateRoot === undefined ? { legacyStateRoot: join(userInfo().homedir, '.agentsanywhere', 'dsh-bridge-next') } : {}),
     connectorSourceDir,
+    ...(config.connectorServicePath !== undefined ? { connectorServicePath: config.connectorServicePath } : {}),
     apiBaseUrl: normalizeServerOrigin(config.apiBaseUrl ?? CLOUD_API_BASE_URL),
     uvPath: config.uvPath ?? process.env['UV_PATH'] ?? 'uv',
   }

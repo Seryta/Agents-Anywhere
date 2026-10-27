@@ -28,6 +28,8 @@ export const PYPI_MIRRORS = [
 export type ConnectorAction = 'start' | 'stop' | 'restart'
 export type ConnectorFolder = 'data' | 'logs'
 export interface ConnectorManagement {
+  /** `external` means a shared service owns the Connector; this plugin only manages it. */
+  mode?: 'managed' | 'external'
   settings: ConnectorSettings
   resolvedUvPath: string | null
   dataPath: string

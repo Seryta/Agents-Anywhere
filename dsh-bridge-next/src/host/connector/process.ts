@@ -5,9 +5,10 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { promisify } from 'node:util'
 import { Mesh, MeshCallError, Router } from 'meshcall'
 import type { ResolvedConfig } from '../config.js'
-import type { BoundDevice } from '../account/binding.js'
+import type { Account } from '../account/api.js'
+import type { DeviceIdentity } from '../account/binding.js'
 import { writeJson } from '../storage/files.js'
-import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorSettings } from '../../contracts/connector.js'
+import { DEFAULT_CONNECTOR_SETTINGS, type ConnectorAction, type ConnectorSettings } from '../../contracts/connector.js'
 import type { RuntimeLogPage, RuntimeLogQuery } from '../../contracts/logs.js'
 import { ControlServiceClient, type ConnectorState as ControlState } from '../generated/connector-control.js'
 import { LogsServiceClient } from '../generated/connector-logs.js'
@@ -76,11 +77,17 @@ function parseRendezvous(line: string): Rendezvous | undefined {
 
 export interface ConnectorProcess {
   readonly running: boolean
+  /** True when a shared service owns the Connector; this plugin never starts or stops its process. */
+  readonly external?: boolean
+  /** External mode only: keep the saved identity or register this machine through the service. */
+  bindAccount?(account: Account, signal: AbortSignal, recovery?: 'reconnect' | 'recreate'): Promise<DeviceIdentity>
+  /** External mode only: start, stop or restart the shared runtime for every Agent. */
+  controlRuntime?(action: ConnectorAction): Promise<void>
   readonly lastError?: string | null
   readonly logsPath?: string | null
   onState(listener: (state: ConnectorState) => void): () => void
   prepare(settings?: ConnectorSettings): Promise<void>
-  start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void>
+  start(binding: DeviceIdentity, apiBaseUrl: string, signal: AbortSignal): Promise<void>
   stop(): Promise<void>
   /** Stops the Connector and drops its dependency environment, so the next start reinstalls it. */
   resetEnvironment(): Promise<void>
@@ -229,7 +236,9 @@ export class SourceConnector implements ConnectorProcess {
     }
   }
 
-  async start(binding: BoundDevice, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
+  async start(binding: DeviceIdentity, apiBaseUrl: string, signal: AbortSignal): Promise<void> {
+    // A token is what this mode writes into its own configuration before spawning.
+    if (!binding.connectorToken) throw new Error('Connector 凭据缺失。')
     if (this.stopping) await this.stopping
     if (this.running) return
     if (this.alive) await this.stop()

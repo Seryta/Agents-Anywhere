@@ -14,6 +14,7 @@ export interface Binding {
   name: string
 }
 
+export interface DeviceIdentity { connectorId: string; name: string; connectorToken?: string }
 export type BoundDevice = Binding & { connectorId: string; connectorToken: string }
 export class DeviceRecoveryRequired extends Error {
   constructor(readonly connectorId: string, readonly reason: 'deleted' | 'disconnected') {

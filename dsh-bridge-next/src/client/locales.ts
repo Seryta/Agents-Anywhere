@@ -5,6 +5,8 @@ import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 export const LOCALE_NS = 'agents-anywhere.next'
 
 const hostMessages = {
+  "由共享服务管理，停止或重启将影响此设备上的所有 Agent。": "Managed by the shared service. Stopping or restarting affects all Agents on this device.",
+  "重置只清除本插件的账号数据，共享服务与其他 Agent 继续运行。": "Reset clears only this plugin account. The shared service and other Agents keep running.",
   "本机连接被占用，无法启动。": "The local connection is in use and cannot start.",
   "请退出其他正在运行的 DSH，再点击“尝试重启”。如果只开了一个 DSH，请检查是否重复启用了插件。": "Quit other running DSH instances, then click Try restarting. If only one DSH is open, check whether the plugin is enabled more than once.",
   "本机连接启动失败：访问权限不足。": "The local connection could not start: permission denied.",

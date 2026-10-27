@@ -98,7 +98,7 @@ def test_pair_starts_connector_after_saving_credentials(
             "--config",
             str(config_path),
             "--poll-interval",
-            "0",
+            "0.001",
         ]
     )
     asyncio.run(cli_module._pair(args))
@@ -131,7 +131,7 @@ def test_pair_no_start_only_saves_credentials(monkeypatch, tmp_path) -> None:
             "--config",
             str(config_path),
             "--poll-interval",
-            "0",
+            "0.001",
             "--no-start",
         ]
     )

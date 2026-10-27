@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import os
 import sys
 import time
@@ -42,6 +43,10 @@ def main(argv: list[str] | None = None) -> None:
             asyncio.run(_start(args))
         elif args.command == "rpc":
             asyncio.run(_rpc(args))
+        elif args.command == "serve":
+            asyncio.run(_serve(args))
+        elif args.command == "doctor":
+            _doctor(args)
         else:
             parser.print_help()
     except CliError as exc:
@@ -79,7 +84,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="anywhere-cli", description="Agent Server Codex connector CLI"
     )
     subparsers = parser.add_subparsers(
-        dest="command", metavar="{start,pair,configure,rpc}"
+        dest="command", metavar="{start,pair,configure,rpc,serve,doctor}"
     )
 
     start = subparsers.add_parser("start", help="start the connector")
@@ -108,6 +113,24 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_config_args(rpc)
     _add_debug_arg(rpc)
+    serve = subparsers.add_parser(
+        "serve", help="run the per-user shared Connector service"
+    )
+    _add_config_args(serve)
+    _add_debug_arg(serve)
+    serve.add_argument(
+        "--service", help="absolute rendezvous path for local managers"
+    )
+    doctor = subparsers.add_parser(
+        "doctor", help="check the running shared service; emit JSON"
+    )
+    doctor.add_argument("--service", help="absolute rendezvous path of the shared service")
+    doctor.add_argument(
+        "--expect-runtime",
+        action="append",
+        default=[],
+        help="required installed runtime type (repeatable)",
+    )
     return parser
 
 
@@ -127,6 +150,16 @@ def _add_debug_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _positive_seconds(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("invalid duration") from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero and finite")
+    return seconds
+
+
 def _add_pair_args(parser: argparse.ArgumentParser) -> None:
     _add_config_args(parser)
     _add_debug_arg(parser)
@@ -136,10 +169,16 @@ def _add_pair_args(parser: argparse.ArgumentParser) -> None:
         help="backend server URL, for example anywhere.com or https://api.anywhere.com",
     )
     parser.add_argument(
-        "--poll-interval", type=float, default=2, help="seconds between pairing polls"
+        "--poll-interval",
+        type=_positive_seconds,
+        default=2,
+        help="seconds between pairing polls",
     )
     parser.add_argument(
-        "--timeout", type=float, default=600, help="pairing timeout in seconds"
+        "--timeout",
+        type=_positive_seconds,
+        default=600,
+        help="pairing timeout in seconds",
     )
     parser.add_argument(
         "--no-start",
@@ -157,15 +196,36 @@ async def _rpc(args: argparse.Namespace) -> None:
     await serve_host(config_path=args.config, debug=args.debug)
 
 
+async def _serve(args: argparse.Namespace) -> None:
+    from connector.management.service import rendezvous_path, run_service
+
+    await run_service(
+        args.config,
+        rendezvous=args.service or rendezvous_path(),
+        debug=args.debug,
+    )
+
+
+def _doctor(args: argparse.Namespace) -> None:
+    import json
+
+    from connector.management.doctor import diagnose
+
+    result = asyncio.run(
+        diagnose(Path(args.service) if args.service else None, args.expect_runtime)
+    )
+    print(json.dumps(result, ensure_ascii=False))
+    if not result["ok"]:
+        raise SystemExit(1)
+
+
 async def _pair(args: argparse.Namespace) -> None:
     lease = RuntimeLease(legacy_paths=[Path(args.config).with_name("connector-runtime.json")])
-    if not args.no_start:
-        lease.claim()
+    lease.claim()
     try:
         await _pair_with_lease(args, lease)
     finally:
-        if not args.no_start:
-            lease.release()
+        lease.release()
 
 
 async def _pair_with_lease(args: argparse.Namespace, lease: RuntimeLease) -> None:
@@ -262,8 +322,13 @@ def _configure(args: argparse.Namespace) -> None:
         connector_id=args.connector_id,
         connector_token=args.connector_token,
     )
-    path = config.save(args.config)
-    print(f"Saved connector config: {path}")
+    lease = RuntimeLease(legacy_paths=[Path(args.config).with_name("connector-runtime.json")])
+    lease.claim(config)
+    try:
+        path = config.save(args.config)
+        print(f"Saved connector config: {path}")
+    finally:
+        lease.release()
 
 
 def _resolve_config(args: argparse.Namespace) -> ConnectorConfig:

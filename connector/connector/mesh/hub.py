@@ -9,7 +9,9 @@ keys, so MeshCall's reconnects bring every peer back.
 The Router's auth file holds one random API key per role, regenerated for each
 process and limited to what that role needs (see ``ROLE_PERMISSIONS``). The
 ``host`` key goes to the process that launched ``anywhere-cli rpc`` on stdout;
-the ``dsh-bridge`` key is published in a 0600 file while a DSH runtime runs.
+the ``dsh-bridge`` key is published in a 0600 file while a DSH runtime runs, and
+the ``service`` key in the shared service's rendezvous while
+``anywhere-cli serve`` runs.
 """
 
 from __future__ import annotations
@@ -35,6 +37,8 @@ from connector.logging import logger
 
 CONTROL_SERVICE = "aa.local.v2.Control"
 LOGS_SERVICE = "aa.local.v2.Logs"
+# The shared service's own surface: identity, account binding and Runtime lifecycle.
+SHARED_SERVICE = "aa.local.v2.Shared"
 DSH_SYNC_SERVICE = "aa.dsh.v2.Sync"
 DSH_BRIDGE_SERVICE = "aa.dsh.v2.Bridge"
 REGISTRY_SERVICE = "meshcall.router.v1.Registry"
@@ -42,11 +46,13 @@ REGISTRY_SERVICE = "meshcall.router.v1.Registry"
 HOST_ROLE = "host"
 CONNECTOR_ROLE = "connector"
 DSH_BRIDGE_ROLE = "dsh-bridge"
+SERVICE_ROLE = "service"
 
 # register: services the role may serve; call: service/method rules.
 ROLE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
     CONNECTOR_ROLE: {
-        "register": [CONTROL_SERVICE, LOGS_SERVICE, DSH_SYNC_SERVICE],
+        # The shared service serves its own surface on the same Router.
+        "register": [CONTROL_SERVICE, LOGS_SERVICE, DSH_SYNC_SERVICE, SHARED_SERVICE],
         "call": [f"{DSH_BRIDGE_SERVICE}/*", f"{REGISTRY_SERVICE}/*"],
     },
     # The Registry lets `meshcall router inspect` / `call` describe the services.
@@ -57,6 +63,12 @@ ROLE_PERMISSIONS: dict[str, dict[str, list[str]]] = {
     DSH_BRIDGE_ROLE: {
         "register": [DSH_BRIDGE_SERVICE],
         "call": [f"{DSH_SYNC_SERVICE}/*", *[f"{LOGS_SERVICE}/{method}" for method in ("write", "read", "tail")]],
+    },
+    # A local manager (the DSH plugin) attaches to the shared service. It
+    # owns no Router and must not reach the DSH sync services.
+    SERVICE_ROLE: {
+        "register": [],
+        "call": [f"{SHARED_SERVICE}/*", f"{LOGS_SERVICE}/*", f"{REGISTRY_SERVICE}/*"],
     },
 }
 

@@ -80,3 +80,13 @@ def test_log_service_access_logs_are_excluded_to_prevent_feedback() -> None:
         assert len(events) == 1
         assert 'call-1' in events[0]['details']
     asyncio.run(exercise())
+
+
+def test_standard_runtime_extension_logs_reach_official_logging(capsys) -> None:
+    import logging
+
+    from connector.logging import configure_connector_logging
+
+    configure_connector_logging()
+    logging.getLogger('pi_aa.runtime').info('runtime extension connected')
+    assert 'runtime extension connected' in capsys.readouterr().err
